@@ -13,7 +13,7 @@ To download and install the package, type
     
 ## Quickstart
 
-The script below shows an easy way to use the code:
+The script below provides a minimal example to use the code:
 
     #import module
     import baryonification as bfc
@@ -44,8 +44,52 @@ The script below shows an easy way to use the code:
     #baryonify                                                                                                                                                                                                                                                                       
     bfc.displace(par)
 
-All model parameters are defined in baryonification/params.py
+All model parameters are defined in baryonification/params.py.
 
-##Contact
+Information about the analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
 
-Please contact Aurel Schneoider (aurel.schneider@uzh.ch) for questions, remarks, bugs etc
+    #import modules
+    import baryonification as bfc
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    #initialise parameters                                                                                                                                                                                                                                                                     
+    par = bfc.par()
+
+    #set paths to input-files
+    par.files.transfct     = "path_to_transfer_function/CDM_PLANCK_tk.dat"
+
+    #radial bins
+    rbin = np.logspace(np.log10(0.005),np.log10(50),100,base=10)
+    
+    #mass and concetration of profile
+    Mvir = 1e13
+    cvir = 10
+    
+    #calculate thing related to 2-halo term
+    vc_r, vc_m, vc_var, vc_bias, vc_corr = bfc.cosmo(par)
+    var_tck  = splrep(vc_m, vc_var, s=0)
+    bias_tck = splrep(vc_m, vc_bias, s=0)
+    corr_tck = splrep(vc_r, vc_corr, s=0)
+    cosmo_var  = splev(Mvir,var_tck)
+    cosmo_bias = splev(Mvir,bias_tck)
+    cosmo_corr = splev(rbin,corr_tck)
+
+    #calcualte fractions and density, mass, pressure, temperature profiles
+    frac, den, mass, press, temp = bfc.profiles(rbin,Mvir,cvir,cosmo_corr,cosmo_bias,cosmo_var,par)
+
+    #plot density profiles
+    fig = plt.figure(dpi=120)
+    plt.loglog(rbin,den['HGA'], color='blue', label='Hot gas profile')
+    plt.loglog(rbin,den['DMO'], color='red', label='Dark matter profile')
+    plt.loglog(rbin,den['CGA']+den['SGA'], color='yellow', label='Stellar profile (central + satellites)')
+    plt.loglog(rbin,den['DMB'], color='black', label='Total profile (incl 2-halo term)')
+    plt.legend()
+    plt.show()
+
+    
+## Contact
+
+Please contact Aurel Schneider (aurel.schneider@uzh.ch) for questions, remarks, bugs etc.
+
+
