@@ -1,45 +1,95 @@
-**Edit a file, create a new file, and clone from Bitbucket in under 2 minutes**
+# Baryonification
 
-When you're done, you can delete the content in this README and update the file with details for others getting started with your repository.
+Code to modify gravity-only N-body simulations accounting for effects from gas, stars, and baryonic feedback on the density distribution. Component wise output for gas stars and dark matter. See https://arxiv.org/abs/2507.07892 for more information.
+An earlier version of the code can be found on Bitbucket (https://bitbucket.org/aurelschneider/baryonification/src/master/ with corresponding references https://arxiv.org/abs/1510.06034, https://arxiv.org/abs/1810.08629).
 
-*We recommend that you open this README in another tab as you perform the tasks below. You can [watch our video](https://youtu.be/0ocf7u76WSo) for a full demo of all the steps in this tutorial. Open the video in a new tab to avoid leaving Bitbucket.*
+## Installation
 
----
+To download and install the package, type
 
-## Edit a file
+    git clone https://github.com/aurelschneider/baryonification.git
+    cd baryonification
+    pip install .
+    
+## Quickstart
 
-You’ll start by editing this README file to learn how to edit a file in Bitbucket.
+The script below provides a minimal example to use the code:
 
-1. Click **Source** on the left side.
-2. Click the README.md link from the list of files.
-3. Click the **Edit** button.
-4. Delete the following text: *Delete this line to make a change to the README from Bitbucket.*
-5. After making your change, click **Commit** and then **Commit** again in the dialog. The commit page will open and you’ll see the change you just made.
-6. Go back to the **Source** page.
+    #import module
+    import baryonification as bfc
 
----
+    #initialise parameters                                                                                                                                                                                                                                                                     
+    par = bfc.par()
 
-## Create a file
+    #set paths to input-files
+    par.files.transfct     = "path_to_transfer_function/CDM_PLANCK_tk.dat"
+    par.files.partfile_in  = "path_to_nbody_file/CDM_L128_N256.00100
+    par.files.halofile_in  = "path_to_halo_file/CDM_L128_N256.00100.z0.000_halos
 
-Next, you’ll add a new file to this repository.
+    #set path to output-file
+    par.files.partfile_out = "path_to_output_file/BFC-CDM_L128_N256.00100
 
-1. Click the **New file** button at the top of the **Source** page.
-2. Give the file a filename of **contributors.txt**.
-3. Enter your name in the empty file space.
-4. Click **Commit** and then **Commit** again in the dialog.
-5. Go back to the **Source** page.
+    #modify model parameters (all default values listed in baryonification/params.py)
+    par.baryon.Mc    = 1e13
+    par.baryon.mu    = 0.5
+    par.baryon.delta = 5.0
 
-Before you move on, go ahead and explore the repository. You've already seen the **Source** page, but check out the **Commits**, **Branches**, and **Settings** pages.
+    #set simulation box and redshift
+    par.sim.Lbox = 128
+    par.cosmo.redshift = 0.0
 
----
+    #Set number of chunks for paralleisation (N_chunk=i means 2^i chunks)
+    par.sim.N_chunk = 2
 
-## Clone a repository
+    #baryonify                                                                                                                                                                                                                                                                       
+    bfc.displace(par)
 
-Use these steps to clone from SourceTree, our client for using the repository command-line free. Cloning allows you to work on your files locally. If you don't yet have SourceTree, [download and install first](https://www.sourcetreeapp.com/). If you prefer to clone from the command line, see [Clone a repository](https://confluence.atlassian.com/x/4whODQ).
+All model parameters are defined in baryonification/params.py.
 
-1. You’ll see the clone button under the **Source** heading. Click that button.
-2. Now click **Check out in SourceTree**. You may need to create a SourceTree account or log in.
-3. When you see the **Clone New** dialog in SourceTree, update the destination path and name if you’d like to and then click **Clone**.
-4. Open the directory you just created to see your repository’s files.
+Information about the analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
 
-Now that you're more familiar with your Bitbucket repository, go ahead and add a new file locally. You can [push your change back to Bitbucket with SourceTree](https://confluence.atlassian.com/x/iqyBMg), or you can [add, commit,](https://confluence.atlassian.com/x/8QhODQ) and [push from the command line](https://confluence.atlassian.com/x/NQ0zDQ).
+    #import modules
+    import baryonification as bfc
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    #initialise parameters                                                                                                                                                                                                                                                                     
+    par = bfc.par()
+
+    #set paths to input-files
+    par.files.transfct     = "path_to_transfer_function/CDM_PLANCK_tk.dat"
+
+    #radial bins
+    rbin = np.logspace(np.log10(0.005),np.log10(50),100,base=10)
+    
+    #mass and concetration of profile
+    Mvir = 1e13
+    cvir = 10
+    
+    #calculate thing related to 2-halo term
+    vc_r, vc_m, vc_var, vc_bias, vc_corr = bfc.cosmo(par)
+    var_tck  = splrep(vc_m, vc_var, s=0)
+    bias_tck = splrep(vc_m, vc_bias, s=0)
+    corr_tck = splrep(vc_r, vc_corr, s=0)
+    cosmo_var  = splev(Mvir,var_tck)
+    cosmo_bias = splev(Mvir,bias_tck)
+    cosmo_corr = splev(rbin,corr_tck)
+
+    #calcualte fractions and density, mass, pressure, temperature profiles
+    frac, den, mass, press, temp = bfc.profiles(rbin,Mvir,cvir,cosmo_corr,cosmo_bias,cosmo_var,par)
+
+    #plot density profiles
+    fig = plt.figure(dpi=120)
+    plt.loglog(rbin,den['HGA'], color='blue', label='Hot gas profile')
+    plt.loglog(rbin,den['DMO'], color='red', label='Dark matter profile')
+    plt.loglog(rbin,den['CGA']+den['SGA'], color='yellow', label='Stellar profile (central + satellites)')
+    plt.loglog(rbin,den['DMB'], color='black', label='Total profile (incl 2-halo term)')
+    plt.legend()
+    plt.show()
+
+    
+## Contact
+
+Please contact Aurel Schneider (aurel.schneider@uzh.ch) for questions, remarks, bugs etc.
+
+
