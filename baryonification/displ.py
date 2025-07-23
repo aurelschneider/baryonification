@@ -15,7 +15,7 @@ from .constants import *
 from .profiles import *
 from .io import *
 
-from memory_profiler import profile
+#from memory_profiler import profile
 
 """
 DISPLACEMENT FUNCTION

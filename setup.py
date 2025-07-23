@@ -15,4 +15,5 @@ setup(name='baryonification',
       author='Aurel Schneider',
       author_email='schneider.duhem@gmail.com',
       packages=['baryonification'],
+      install_requires=["numpy>=1.21","scipy>=1.8","schwimmbad"],
       zip_safe=False)
