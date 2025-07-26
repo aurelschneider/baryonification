@@ -16,47 +16,49 @@ from .constants import *
 from .cosmo import *
 
 
+def fstar_fct(Mvir, param, eta=0.3):
+    """
+    Total stellar fraction (central and satellite galaxies).
+    Free model parameter eta.
+    (Function inspired by Moster+2013, Eq.2)
+    """
+    NN = param.baryon.Nstar
+    M1 = param.baryon.Mstar
+    zeta = 1.376
+    #return NN/(Mvir/M1)**(eta)
+    return NN*((Mvir/M1)**(-zeta)+(Mvir/M1)**(eta))**(-1.0)
+
 
 class Profiles:
     """
     Class that defines functions for profiles and fractions.
-    Mainly used for the two-halo term.
+    Used to defined the displacement of particles (in displ.py).
     """
-    def __init__(self, rbin, Mvir, cvir, param):
+    def __init__(self, rbin, Mvir, cvir, cosmo_corr, cosmo_bias, cosmo_var, param):
         self.param = param
         self.cosmo = CosmoCalculator(param)
-        self.Mvir = Mvir
-        self.cvir = cvir
-        self.rvir = (3.0 * Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
-
+        self.rbin  = rbin
+        self.Mvir  = Mvir
+        self.cvir  = cvir
+        self.cosmo_corr = cosmo_corr
+        self.cosmo_bias = cosmo_bias
+        self.cosmo_var  = cosmo_var
+        self.rvir  = (3.0 * Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
+        self.z     = self.param.cosmo.z
         
-    def fstar_fct(self, eta=0.3):
-        """
-        Total stellar fraction (central and satellite galaxies).
-        Free model parameter eta.
-        (Function inspired by Moster+2013, Eq.2)
-        """
-        NN = self.param.baryon.Nstar
-        M1 = self.param.baryon.Mstar
-        zeta = 1.376
-        #return NN/(Mvir/M1)**(eta)
-        return NN * ((self.Mvir / M1) ** (-zeta) + (self.Mvir / M1) ** (eta)) ** (-1.0)
-    
-    def uNFWtr_fct(self, cvir, t):
+    def uNFWtr_fct(self, t):
         """
         Truncated NFW density profile. Normalised.
         """
-        rvir = (3.0 * self.Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
-        x = cvir * self.rbin / rvir
+        x = self.cvir * self.rbin / self.rvir
         return 1.0 / (x * (1.0 + x) ** 2.0 * (1.0 + x ** 2.0 / t ** 2.0) ** 2.0)
    
-    def rhoNFW_fct(self, cvir):
+    def rhoNFW_fct(self):
         """
         NFW density profile.
         """
-        rvir = (3.0 * self.Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
-        rho0 = DELTAVIR * self.cosmo.rhoc_of_z() * cvir ** 3.0 / (3.0 * np.log(1.0 + cvir) - 3.0 * cvir / (1.0 + cvir))
-        x = cvir * self.rbin / rvir
+        rho0 = DELTAVIR * self.cosmo.rhoc_of_z() * self.cvir ** 3.0 / (3.0 * np.log(1.0 + self.cvir) - 3.0 * self.cvir / (1.0 + self.cvir))
+        x = self.cvir * self.rbin / self.rvir
         return rho0 / (x * (1.0 + x) ** 2.0)
     
     def mNFWtr_fct(self, x, t):
@@ -75,23 +77,25 @@ class Profiles:
         return (np.log(1.0 + x) - x / (1.0 + x))
     
     def mTOTtr_fct(self, t):
-        """ Normalised total mass (from truncated NFW)
+        """
+        Normalised total mass (from truncated NFW)
         """
         pref = t ** 2.0 / (1.0 + t ** 2.0) ** 3.0 / 2.0
         first = (3.0 * t ** 2.0 - 1.0) * (np.pi * t - t ** 2.0 - 1.0)
         second = 2.0 * t ** 2.0 * (t ** 2.0 - 3.0) * np.log(t)
         return pref * (first + second)
     
-    def MNFWtr_fct(self, r, cvir, t):
-        """ Truncated NFW mass profile.
-        """r
-        rvir = (3.0 * self.Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
-        return self.Mvir * self.mNFWtr_fct(cvir * r / rvir, t) / self.mNFWtr_fct(cvir, t)
+    def MNFWtr_fct(self, r, t):
+        """
+        Truncated NFW mass profile.
+        """
+        return self.Mvir * self.mNFWtr_fct(self.cvir * r / self.rvir, t) / self.mNFWtr_fct(self.cvir, t)
     
     def MNFW_fct(self):
-        """ NFW mass profile
         """
-        x = cvir * self.rbin / self.rvir
+        NFW mass profile
+        """
+        x = self.cvir * self.rbin / self.rvir
         return (np.log(1.0 + x) - x / (1.0 + x)) / (np.log(1.0 + self.cvir) - self.cvir / (1.0 + self.cvir)) * self.Mvir
     
     def beta_fct(self):
@@ -99,11 +103,10 @@ class Profiles:
         Parametrises slope of gas profile
         Two models (0), (1)
         """
-        z = self.param.cosmo.z
         Mc = self.param.baryon.Mc
         mu = self.param.baryon.mu
         nu = self.param.baryon.nu
-        Mc_of_z = Mc * (1 + z) ** nu
+        Mc_of_z = Mc * (1 + self.z) ** nu
         
         if (self.param.code.beta_model == 0):
             dslope = 3.0
@@ -127,7 +130,7 @@ class Profiles:
         """
         thco = self.param.baryon.thco
         al = self.param.baryon.alpha
-        be = self.beta_fct(self.Mvir)
+        be = self.beta_fct()
         ga = self.param.baryon.gamma
         de = self.param.baryon.delta
 
@@ -184,18 +187,6 @@ class Profiles:
         Returns a dictionary
         """
 
-        #cosmos var, bias, corr
-        vc_r, vc_m, vc_var, vc_bias, vc_corr = self.cosmo.compute_cosmology()
-        var_tck  = splrep(vc_m, vc_var, s=0)
-        bias_tck = splrep(vc_m, vc_bias, s=0)
-        corr_tck = splrep(vc_r, vc_corr, s=0)
-        cosmo_var  = splev(self.Mvir,var_tck)
-        cosmo_bias = splev(self.Mvir,bias_tck)
-        cosmo_corr = splev(self.rbin,corr_tck)
-
-        #redshift
-        zz = self.param.cosmo.z
-        
         #Cosmological params
         Om = self.param.cosmo.Om
         Ob = self.param.cosmo.Ob
@@ -210,11 +201,11 @@ class Profiles:
         deta = self.param.baryon.deta
 
         #Adiabatic contraction/relaxation params
-        ACM_q0 = self.param.code.q0
+        ACM_q0     = self.param.code.q0
         ACM_q0_exp = self.param.code.q0_exp
-        ACM_q1 = self.param.code.q1
+        ACM_q1     = self.param.code.q1
         ACM_q1_exp = self.param.code.q1_exp
-        ACM_q2 = self.param.code.q2
+        ACM_q2     = self.param.code.q2
         ACM_q2_exp = self.param.code.q2_exp
         
         #nonthermal pressure parms
@@ -223,11 +214,11 @@ class Profiles:
         b_nth = self.param.baryon.b_nth
         
         #eps
-        aa = 1 / (1 + zz)
+        aa = 1 / (1 + self.z)
         Da = self.cosmo.growth_factor(aa)
         D0 = self.cosmo.growth_factor(1.0)
         Da /= D0
-        peak_height = 1.686 / cosmo_var ** 0.5
+        peak_height = 1.686 / self.cosmo_var ** 0.5
         eps  = (eps0 - eps1 * peak_height)
 
         if (eps < 0):
@@ -237,29 +228,28 @@ class Profiles:
         tau = eps * self.cvir
                 
         #Total dark-matter-only mass
-        Mtot = self.Mvir*mTOTtr_fct(tau)/mNFWtr_fct(tau)
+        Mtot = self.Mvir*self.mTOTtr_fct(tau)/self.mNFWtr_fct(self.cvir,tau)
         
         #total fractions
         fbar  = Ob/Om
         fcdm  = (Om-Ob)/Om
-        fstar = fSTAR_fct(param,eta)
-        fcga  = fSTAR_fct(param,eta+deta) #Moster13
+        fstar = fstar_fct(self.Mvir, self.param, eta)
+        fcga  = fstar_fct(self.Mvir, self.param, eta+deta) #Moster13
         fsga  = fstar-fcga #satellites and intracluster light
 
-        figa  = param.baryon.ciga*fcga #param.baryon.ciga*1e12/Mtot #param.baryon.ciga*fcga
+        figa  = self.param.baryon.ciga*fcga #param.baryon.ciga*1e12/Mtot #param.baryon.ciga*fcga
         fhga  = fbar-fcga-fsga-figa #gas fraction
     
-    if(fsga<0):
-        fsga = 0.0
-        print('WARNING: negative fraction of satellite galaxies. Set to 0')
-        #exit()
-    
+        if(fsga<0):
+            fsga = 0.0
+            print('WARNING: negative fraction of satellite galaxies. Set to 0')
+     
         #Initial density and mass profiles
-        rho0NFWtr = DELTAVIR*self.cosmo.rhoc_of_z()*self.cvir**3.0/(3.0*self.mNFWtr_fct(tau))
+        rho0NFWtr = DELTAVIR*self.cosmo.rhoc_of_z()*self.cvir**3.0/(3.0*self.mNFWtr_fct(self.cvir, tau))
         rhoNFW = rho0NFWtr*self.uNFWtr_fct(tau)
 
         exclscale = self.param.code.halo_excl
-        rho2h  = (1-np.exp(-exclscale*self.rbin/self.rvir)) * (cosmo_bias*cosmo_corr + 1.0)*Om*RHOC #rho_b=const in comoving coord.
+        rho2h  = (1-np.exp(-exclscale*self.rbin/self.rvir)) * (self.cosmo_bias*self.cosmo_corr + 1.0)*Om*RHOC #rho_b=const in comoving coord.
         
         rhoDMO = rhoNFW + rho2h
         MNFW   = self.MNFWtr_fct(self.rbin, tau)
@@ -288,9 +278,9 @@ class Profiles:
         MCGA_tck = splrep(self.rbin, MCGA, s=0, k=3)
 
         #Adiabatic Correction Model 0 (Abadi et al 2010)
-        if (self.param.code.ACM==0):
-            nn = self.ACM_q0 * (1+zz)**self.ACM_q0_exp #nn = 1 corresponds to Gnedin 2004
-            aa = ACM_q1 * (1+zz)**ACM_q1_exp
+        if (self.param.code.AC_model==0):
+            nn = self.ACM_q0 * (1+self.z)**self.ACM_q0_exp #nn = 1 corresponds to Gnedin 2004
+            aa = ACM_q1 * (1+self.z)**ACM_q1_exp
             func = lambda x: (x-1.0) - aa*(((MNFW + M2h)/((fcdm+fsga)*MNFW + fcga*splev(x*self.rbin,MCGA_tck,der=0,ext=3) + fhga*splev(x*self.rbin,MHGA_tck,der=0,ext=3) + figa*splev(x*self.rbin,MIGA_tck,der=0,ext=3) + splev(x*self.rbin,M2h_tck,der=0,ext=3)))**nn - 1.0)
 
             if (isinstance(self.rbin, float)):
@@ -302,10 +292,10 @@ class Profiles:
         #Adiabatic Correction Model 1 (Velmani and Paranjape 2023)
         elif (self.param.code.AC_model == 1):
 
-            Q0 = ACM_q0 * (1+zz)**ACM_q0_exp  # Q0=0 corresponds to Gnedin 2004, Teyssier et al 2011 
-            Q1 = ACM_q1 * (1+zz)**ACM_q1_exp  # Q1 corresponds to q10 in Velmani and Paranjape 2023
-            Q2 = ACM_q2 * (1+zz)**ACM_q2_exp  # Q2 corresponds to q11 in Velmani and Paranjape 2023
-            Q1fct = lambda rf: Q1 + Q2*np.log(rf/rvir)
+            Q0 = ACM_q0 * (1+self.z)**ACM_q0_exp  # Q0=0 corresponds to Gnedin 2004, Teyssier et al 2011 
+            Q1 = ACM_q1 * (1+self.z)**ACM_q1_exp  # Q1 corresponds to q10 in Velmani and Paranjape 2023
+            Q2 = ACM_q2 * (1+self.z)**ACM_q2_exp  # Q2 corresponds to q11 in Velmani and Paranjape 2023
+            Q1fct = lambda rf: Q1 + Q2*np.log(rf/self.rvir)
             func = lambda x: (x-1.0) - Q1fct(x*self.rbin)*((MNFW + M2h)/((fcdm+fsga)*MNFW + fcga*splev(x*self.rbin,MCGA_tck,der=0) + fhga*splev(x*self.rbin,MHGA_tck,der=0) + figa*splev(x*self.rbin,MIGA_tck,der=0,ext=3) + splev(x*self.rbin,M2h_tck,der=0,ext=3)) - 1.0) - Q0
 
             if (isinstance(self.rbin, float)):
@@ -317,9 +307,9 @@ class Profiles:
         #Adiabatic Correcion Model 2 (Velmani and Paranjape 2023 with step function instead of Q0)
         elif (self.param.code.AC_model == 2):
 
-            Q0 = ACM_q0*(1+zz)**ACM_q0_exp
-            Q1 = ACM_q1*(1+zz)**ACM_q1_exp
-            Q2 = ACM_q2*(1+zz)**ACM_q2_exp #not in use
+            Q0 = ACM_q0*(1+self.z)**ACM_q0_exp
+            Q1 = ACM_q1*(1+self.z)**ACM_q1_exp
+            Q2 = ACM_q2*(1+self.z)**ACM_q2_exp #not in use
 
             #Smooth step function
             nn = 1.5
@@ -336,9 +326,9 @@ class Profiles:
 
         #Model 3 (smooth step function follwoed by AC model)
         elif (self.param.code.AC_model == 3):
-            Q0 = ACM_q0*(1+zz)**ACM_q0_exp
-            Q1 = ACM_q1*(1+zz)**ACM_q1_exp
-            Q2 = ACM_q2*(1+zz)**ACM_q2_exp
+            Q0 = ACM_q0*(1+self.z)**ACM_q0_exp
+            Q1 = ACM_q1*(1+self.z)**ACM_q1_exp
+            Q2 = ACM_q2*(1+self.z)**ACM_q2_exp
 
             #Smooth step function
             nn = 1.5
@@ -360,9 +350,9 @@ class Profiles:
         #Model 4 (attempt with two stage AC model)
         elif (self.param.code.AC_model == 4):
 
-            Q0 = ACM_q0*(1+zz)**ACM_q0_exp
-            Q1 = ACM_q1*(1+zz)**ACM_q1_exp
-            Q2 = ACM_q2*(1+zz)**ACM_q2_exp
+            Q0 = ACM_q0*(1+self.z)**ACM_q0_exp
+            Q1 = ACM_q1*(1+self.z)**ACM_q1_exp
+            Q2 = ACM_q2*(1+self.z)**ACM_q2_exp
 
             #Smooth step function
             nn = 1.5
@@ -384,12 +374,12 @@ class Profiles:
         #Model 5 (explicit function for AC)
         elif (self.param.code.AC_model == 5):
 
-            #Q0 = ACM_q0*(1+zz)**ACM_q0_exp
-            #Q1 = ACM_q1*(1+zz)**ACM_q1_exp
-            #Q2 = ACM_q2*(1+zz)**ACM_q2_exp
-            Q0 = ACM_q0 + ACM_q0_exp*zz
-            Q1 = ACM_q1 + ACM_q1_exp*zz
-            Q2 = ACM_q2 + ACM_q2_exp*zz
+            #Q0 = ACM_q0*(1+self.z)**ACM_q0_exp
+            #Q1 = ACM_q1*(1+self.z)**ACM_q1_exp
+            #Q2 = ACM_q2*(1+self.z)**ACM_q2_exp
+            Q0 = ACM_q0 + ACM_q0_exp*self.z
+            Q1 = ACM_q1 + ACM_q1_exp*self.z
+            Q2 = ACM_q2 + ACM_q2_exp*self.z
 
         #Smooth step function
             nn = 1.5
@@ -403,9 +393,9 @@ class Profiles:
         #Model 6
         elif (self.param.code.AC_model == 6):
 
-            Q0 = ACM_q0*(1+zz)**ACM_q0_exp
-            Q1 = ACM_q1*(1+zz)**ACM_q1_exp
-            Q2 = ACM_q2*(1+zz)**ACM_q2_exp
+            Q0 = ACM_q0*(1+self.z)**ACM_q0_exp
+            Q1 = ACM_q1*(1+self.z)**ACM_q1_exp
+            Q2 = ACM_q2*(1+self.z)**ACM_q2_exp
 
         #Smooth step function                                                                                   
             nn = 1.5
@@ -429,9 +419,9 @@ class Profiles:
         if (self.param.code.adiab_exp==False):
             xx[xx>1] = 1
         
-        MACM     = self.MNFWtr_fct(rbin/xx, tau)
-        MACM_tck = splrep(rbin, MACM, s=0, k=3)
-        rhoACM   = splev(rbin,MACM_tck,der=1)/(4.0*np.pi*rbin**2.0)
+        MACM     = self.MNFWtr_fct(self.rbin/xx, tau)
+        MACM_tck = splrep(self.rbin, MACM, s=0, k=3)
+        rhoACM   = splev(self.rbin,MACM_tck,der=1)/(4.0*np.pi*self.rbin**2.0)
         MACM     = MACM
 
         if (np.any(np.diff(MACM) <= 0)):
@@ -445,8 +435,8 @@ class Profiles:
         #Nonthermal pressure, Shaw2010 model (1006.1945 Eq16, see also 2009.05558, Eq14)
         if (a_nth>0):
             fmax = 4**(-n_nth) / a_nth
-            f1   = (1 + param.cosmo.z)**b_nth
-            f2   = (fmax-1) * np.tanh(b_nth*param.cosmo.z) + 1.0
+            f1   = (1 + self.z)**b_nth
+            f2   = (fmax-1) * np.tanh(b_nth*self.z) + 1.0
             f_z  = min(f1,f2)
         else:
             f_z = 0

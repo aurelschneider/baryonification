@@ -14,7 +14,7 @@ import schwimmbad
 from .cosmo import CosmoCalculator
 from .constants import *
 from .profiles import Profiles
-from .io import *
+from .io_utils import *
 
 #from memory_profiler import profile
 
@@ -205,7 +205,9 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
     #calculate cosmo for 2-halo term
     cosmo = CosmoCalculator(param)
     vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo.compute_cosmology()
-
+    var_tck  = splrep(vc_m, vc_var, s=0)
+    bias_tck = splrep(vc_m, vc_bias, s=0)
+    corr_tck = splrep(vc_r, vc_corr, s=0)    
     
     #Read cosmic variance/nu/correlation and interpolate
     #cosmofile = param.files.cosmofct
@@ -263,7 +265,10 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                 rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
 
                 #initialse profiles
-                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], param)
+                cosmo_var  = splev(h_chunk['Mvir'][i],var_tck)
+                cosmo_bias = splev(h_chunk['Mvir'][i],bias_tck)
+                cosmo_corr = splev(rbin,corr_tck)
+                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], cosmo_corr, cosmo_bias, cosmo_var, param)
 
                 #calculate profiles for displacement
                 frac, dens, mass, pres, temp = profiles.calc_profiles()
@@ -624,10 +629,10 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                             #Check if total stellite stellar mass from (fstar-fcga)*Mvir_host agrees with the sum over satellites (each contributing with fcga_sat*Mvir_sat)
                             #particle_mass = param.cosmo.Ob*rhoc_of_z(param)*Lbox**3/(p_header['Npart']/2)
                             particle_mass = param.cosmo.Ob*RHOC*Lbox**3/(p_header['Npart']/2)
-                            fstar_halo_tot = fSTAR_fct(h_chunk['Mvir'][i],param,param.baryon.eta)
-                            fstar_halo_cga = fSTAR_fct(h_chunk['Mvir'][i],param,param.baryon.eta+param.baryon.deta)
+                            fstar_halo_tot = fstar_fct(h_chunk['Mvir'][i],param,param.baryon.eta)
+                            fstar_halo_cga = fstar_fct(h_chunk['Mvir'][i],param,param.baryon.eta+param.baryon.deta)
                             Mstar_halo_sat = (fstar_halo_tot-fstar_halo_cga)*h_chunk['Mvir'][i] #expected total satellite stellar mass (fstar-fcga)*Mvir_host
-                            Mstar_halo_sat_from_sh_cga = np.sum(fSTAR_fct(shi['Mvir'],param,param.baryon.eta+param.baryon.deta)*shi['Mvir']) #expected total sat stellar mass from fcga_sat*Mvir_sat 
+                            Mstar_halo_sat_from_sh_cga = np.sum(fstar_fct(shi['Mvir'],param,param.baryon.eta+param.baryon.deta)*shi['Mvir']) #expected total sat stellar mass from fcga_sat*Mvir_sat 
                             Sat_boost = Mstar_halo_sat/Mstar_halo_sat_from_sh_cga
                             print("Sat_boost = ", Sat_boost)
 
@@ -647,7 +652,7 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                                 #loop over satellites
                                 for j in range(Nsh):
                                     #reduce satellite stellar mass to make it agree with fsat = (fstar-fcga)*Mvir_host
-                                    fstar_sh_cga = Sat_boost*fSTAR_fct(shi['Mvir'][j],param,param.baryon.eta+param.baryon.deta)
+                                    fstar_sh_cga = Sat_boost*fstar_fct(shi['Mvir'][j],param,param.baryon.eta+param.baryon.deta)
                                     Mstar_sh_cga = fstar_sh_cga*shi['Mvir'][j]
                                     Npart = np.round(Mstar_sh_cga/particle_mass)
                                     if (Npart == 0):
@@ -667,7 +672,7 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                                 #loop over satellites and add stars
                                 for j in range(Nsh):
                                     
-                                    fstar_sh_cga = fSTAR_fct(shi['Mvir'][j],param,param.baryon.eta+param.baryon.deta)
+                                    fstar_sh_cga = fstar_fct(shi['Mvir'][j],param,param.baryon.eta+param.baryon.deta)
                                     Mstar_sh_cga = fstar_sh_cga*shi['Mvir'][j]
                                     Npart = np.round(Mstar_sh_cga/particle_mass)
                                     if (Npart == 0):
@@ -858,7 +863,10 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                 rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
 
                 #initialse profiles
-                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], param)
+                cosmo_var  = splev(h_chunk['Mvir'][i],var_tck)
+                cosmo_bias = splev(h_chunk['Mvir'][i],bias_tck)
+                cosmo_corr = splev(rbin,corr_tck)
+                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], cosmo_corr, cosmo_bias, cosmo_var, param)
 
                 #calculate profiles for displacement
                 frac, dens, mass, pres, temp = profiles.calc_profiles()

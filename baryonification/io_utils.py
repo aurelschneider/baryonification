@@ -29,6 +29,9 @@ def read_nbody_file(param):
     Only supports tispy file format for the moment
     """
 
+    #initialize cosmology class
+    cosmo = CosmoCalculator(param)
+
     nbody_file_in = param.files.partfile_in
     nbody_file_format = param.files.partfile_format
     Lbox   = param.sim.Lbox
@@ -64,7 +67,7 @@ def read_nbody_file(param):
 
         #convert to Msun/h
         print("Om = ", np.sum(p_dm['mass']))
-        p_dm['mass'] = p_dm['mass'] * rhoc_of_z(param)*Lbox**3
+        p_dm['mass'] = p_dm['mass'] * cosmo.rhoc_of_z()*Lbox**3
         
         print('Reading tipsy-file done!')
 
@@ -94,7 +97,7 @@ def read_nbody_file(param):
         p_dt = np.dtype([('mass','>f'),("x",'>f'),("y",'>f'),("z",'>f'),("vx",'>f'),("vy",'>f'),("vz",'>f'),("eps",'>f'),("phi",'>f')])
         p_dm = np.zeros(p_header['Npart'],dtype=p_dt)
         #p_dm['mass'] = dm_mass
-        p_dm['mass'] = dm_mass * rhoc_of_z(param)*Lbox**3
+        p_dm['mass'] = dm_mass * cosmo.rhoc_of_z()*Lbox**3
         p_dm['x'], p_dm['y'], p_dm['z']    = dm_pos[:,0], dm_pos[:,1], dm_pos[:,2]
         p_dm['vx'], p_dm['vy'], p_dm['vz'] = dm_vel[:,0], dm_vel[:,1], dm_vel[:,2]
         p_dm['phi'] = dm_pot
@@ -146,6 +149,9 @@ def write_nbody_file(p_header,p_gas,p_dm,p_star,param):
     p_list = list of p with legth = Nchunk 
     """
 
+    #initialize cosmology class
+    cosmo = CosmoCalculator(param)
+    
     nbody_file_out = param.files.partfile_out
     nbody_file_format = param.files.partfile_format
     Lbox = param.sim.Lbox
@@ -194,9 +200,9 @@ def write_nbody_file(p_header,p_gas,p_dm,p_star,param):
         p_star['z'] = (p_star['z']/Lbox-0.5)
 
         #back to tipsy mass units
-        p_gas['mass'] = p_gas['mass']/rhoc_of_z(param)/Lbox**3
-        p_dm['mass']  = p_dm['mass']/rhoc_of_z(param)/Lbox**3
-        p_star['mass'] = p_star['mass']/rhoc_of_z(param)/Lbox**3
+        p_gas['mass'] = p_gas['mass']/cosmo.rhoc_of_z()/Lbox**3
+        p_dm['mass']  = p_dm['mass']/cosmo.rhoc_of_z()/Lbox**3
+        p_star['mass'] = p_star['mass']/cosmo.rhoc_of_z()/Lbox**3
 
         print("Om = ", np.sum(p_gas['mass'])+np.sum(p_dm['mass'])+np.sum(p_star['mass']))
         
