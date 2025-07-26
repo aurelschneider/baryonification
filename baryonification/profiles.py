@@ -20,7 +20,7 @@ from .cosmo import *
 class Profiles:
     """
     Class that defines functions for profiles and fractions.
-    Mainly used for the two-halo term.
+    Used to defined the displacement of particles (in displ.py).
     """
     def __init__(self, rbin, Mvir, cvir, param):
         self.param = param
@@ -83,13 +83,15 @@ class Profiles:
         return pref * (first + second)
     
     def MNFWtr_fct(self, r, cvir, t):
-        """ Truncated NFW mass profile.
-        """r
+        """
+        Truncated NFW mass profile.
+        """
         rvir = (3.0 * self.Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
         return self.Mvir * self.mNFWtr_fct(cvir * r / rvir, t) / self.mNFWtr_fct(cvir, t)
     
     def MNFW_fct(self):
-        """ NFW mass profile
+        """
+        NFW mass profile
         """
         x = cvir * self.rbin / self.rvir
         return (np.log(1.0 + x) - x / (1.0 + x)) / (np.log(1.0 + self.cvir) - self.cvir / (1.0 + self.cvir)) * self.Mvir
@@ -183,7 +185,6 @@ class Profiles:
         Calculates fractions, density and mass profiles as a function of radius
         Returns a dictionary
         """
-
         #cosmos var, bias, corr
         vc_r, vc_m, vc_var, vc_bias, vc_corr = self.cosmo.compute_cosmology()
         var_tck  = splrep(vc_m, vc_var, s=0)
@@ -249,11 +250,10 @@ class Profiles:
         figa  = param.baryon.ciga*fcga #param.baryon.ciga*1e12/Mtot #param.baryon.ciga*fcga
         fhga  = fbar-fcga-fsga-figa #gas fraction
     
-    if(fsga<0):
-        fsga = 0.0
-        print('WARNING: negative fraction of satellite galaxies. Set to 0')
-        #exit()
-    
+        if(fsga<0):
+            fsga = 0.0
+            print('WARNING: negative fraction of satellite galaxies. Set to 0')
+     
         #Initial density and mass profiles
         rho0NFWtr = DELTAVIR*self.cosmo.rhoc_of_z()*self.cvir**3.0/(3.0*self.mNFWtr_fct(tau))
         rhoNFW = rho0NFWtr*self.uNFWtr_fct(tau)
