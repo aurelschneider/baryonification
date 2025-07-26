@@ -16,6 +16,7 @@ from .constants import *
 from .cosmo import *
 
 
+
 class Profiles:
     """
     Class that defines functions for profiles and fractions.

@@ -1,5 +1,5 @@
 """
-CALCULATE DISPLACEMENT FUNCßTION FOR A GRID OF M AND C
+CALCULATE DISPLACEMENT FUNCTION FOR A GRID OF M AND C
 PRINT INFORMATION INTO TEMPOßRARY FILE
 
 """
@@ -11,8 +11,9 @@ from numpy.lib.recfunctions import append_fields
 
 import schwimmbad
 
+from .cosmo import CosmoCalculator
 from .constants import *
-from .profiles import *
+from .profiles import Profiles
 from .io import *
 
 #from memory_profiler import profile
@@ -201,18 +202,23 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
     #relevant parameters
     Lbox = param.sim.Lbox
     
+    #calculate cosmo for 2-halo term
+    cosmo = CosmoCalculator(param)
+    vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo.compute_cosmology()
+
+    
     #Read cosmic variance/nu/correlation and interpolate
-    cosmofile = param.files.cosmofct
-    try:
-        vc_r, vc_m, vc_var, vc_bias, vc_corr = np.loadtxt(cosmofile, usecols=(0,1,2,3,4), unpack=True)
-        var_tck  = splrep(vc_m, vc_var, s=0)
-        bias_tck = splrep(vc_m, vc_bias, s=0)
-        corr_tck = splrep(vc_r, vc_corr, s=0)
-    except IOError:
-        print('IOERROR: Cosmofct file does not exist!')
-        print('Define par.files.cosmofct = "/path/to/file"')
-        print('Run: cosmo(params) to create file')
-        exit()
+    #cosmofile = param.files.cosmofct
+    #try:
+    #    vc_r, vc_m, vc_var, vc_bias, vc_corr = np.loadtxt(cosmofile, usecols=(0,1,2,3,4), unpack=True)
+    #    var_tck  = splrep(vc_m, vc_var, s=0)
+    #    bias_tck = splrep(vc_m, vc_bias, s=0)
+    #    corr_tck = splrep(vc_r, vc_corr, s=0)
+    #except IOError:
+    #    print('IOERROR: Cosmofct file does not exist!')
+    #    print('Define par.files.cosmofct = "/path/to/file"')
+    #    print('Run: cosmo = Cosmology(par) and cosmo.compute_cosmology() to create file')
+    #    exit()
 
     if (param.code.multicomp==True):
 
@@ -256,11 +262,11 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                 rmax = (20.0*h_chunk['rvir'][i] if 20.0*h_chunk['rvir'][i]<param.code.rmax else param.code.rmax)
                 rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
 
-                #calculate displacement
-                cosmo_var  = splev(h_chunk['Mvir'][i],var_tck)
-                cosmo_bias = splev(h_chunk['Mvir'][i],bias_tck)
-                cosmo_corr = splev(rbin,corr_tck)
-                frac, dens, mass, pres, temp = profiles(rbin,h_chunk['Mvir'][i],h_chunk['cvir'][i],cosmo_corr,cosmo_bias,cosmo_var,param)
+                #initialse profiles
+                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], param)
+
+                #calculate profiles for displacement
+                frac, dens, mass, pres, temp = profiles.calc_profiles()
 
                 #baryon displacement
                 DBAR = displ(rbin, (1-frac['CDM'])*(mass['NFW'] + mass['BG']), mass['HGA'] + mass['IGA'] + mass['CGA'] + mass['SGA'] + (1-frac['CDM'])*mass['BG'])
@@ -851,11 +857,11 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                 rmax = (20.0*h_chunk['rvir'][i] if 20.0*h_chunk['rvir'][i]<param.code.rmax else param.code.rmax)
                 rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
 
-                #calculate displacement
-                cosmo_var  = splev(h_chunk['Mvir'][i],var_tck)
-                cosmo_bias = splev(h_chunk['Mvir'][i],bias_tck)
-                cosmo_corr = splev(rbin,corr_tck)
-                frac, dens, mass, pres, temp = profiles(rbin,h_chunk['Mvir'][i],h_chunk['cvir'][i],cosmo_corr,cosmo_bias,cosmo_var,param)
+                #initialse profiles
+                profiles = Profiles(rbin, h_chunk['Mvir'][i], h_chunk['cvir'][i], param)
+
+                #calculate profiles for displacement
+                frac, dens, mass, pres, temp = profiles.calc_profiles()
 
                 #DDMB = displ(rbin,mass['DMO'],mass['DMB'])
                 DDMB = displ(rbin,mass['NFW'] + mass['BG'], mass['CDM'] + mass['BG'])
