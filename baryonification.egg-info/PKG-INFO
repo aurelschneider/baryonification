@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: baryonification
+Version: 0.1
+Summary: Correcting N-body outputs to account for baryon effects
+Home-page: https://bitbucket.org/aurel..
+Author: Aurel Schneider
+Author-email: schneider.duhem@gmail.com
+Requires-Dist: numpy>=1.21
+Requires-Dist: scipy>=1.8
+Requires-Dist: schwimmbad
+Dynamic: author
+Dynamic: author-email
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: summary

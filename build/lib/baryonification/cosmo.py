@@ -152,7 +152,7 @@ class CosmoCalculator:
             bin_bias.append(self.bias(var_val * Da**2, self.dc))
             bin_corr.append(self.correlation(r_val, TF_tck, A_NORM))
 
-        bin_var = np.array(bin_var) * Da**2
+        bin_var  = np.array(bin_var) * Da**2
         bin_bias = np.array(bin_bias)
         bin_corr = np.array(bin_corr) * Da**2
 
