@@ -48,11 +48,15 @@ def displace(param):
     writing N-body file
     """
 
-    #Read in N-body particle file and build chunks
-    p_header, p_list = read_nbody_file(param)
+    # Use IO_nbody and IO_halo classes for I/O
+    nbody_io = IO_nbody(param)
+    halo_io = IO_halo(param)
 
-    #Read in halo file, build chunks and buffer
-    h_list = read_halo_file(param)
+    # Read in N-body particle file and build chunks
+    p_header, p_list = nbody_io.read()
+
+    # Read in halo file, build chunks and buffer
+    h_list = halo_io.read()
     
     #split work on cpus and perform displacement
     N_chunk = param.sim.N_chunk
@@ -93,8 +97,8 @@ def displace(param):
     p_header['Ngas']  = len(p_gas)
     p_header['Nstar'] = len(p_star)
 
-    #combine chunks and write output
-    write_nbody_file(p_header,p_gas,p_dm,p_star,param)
+    # Combine chunks and write output
+    nbody_io.write(p_header, p_gas, p_dm, p_star)
 
     return
 
@@ -721,8 +725,8 @@ def displace_chunk(p_header,p_chunk,h_chunk,param):
                             #    if (Npart == 0):
                             #        Npart = 1
                             #    print("Npart_per_sat = ", Npart)
-			    #    dist_, ip_sh_stars = p_tree.query((shi['x'][j],shi['y'][j],shi['z'][j]), Npart, distance_upper_bound=shi['rvir'][j])
-			    #    #Set ID: 0=gas+sga, 1=stars
+                #    dist_, ip_sh_stars = p_tree.query((shi['x'][j],shi['y'][j],shi['z'][j]), Npart, distance_upper_bound=shi['rvir'][j])
+                #    #Set ID: 0=gas+sga, 1=stars
                             #    ip_sh_stars_clean = np.delete(ip_sh_stars, np.where(ip_sh_stars == len(DpBAR['id'])))
                             #    #if (len(ip_sh_stars)):
                             #    DpBAR['id'][ip_sh_stars_clean] = 1
