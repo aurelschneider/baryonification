@@ -53,6 +53,7 @@ class IO_nbody:
             print("Om = ", np.sum(p_dm['mass']))
             p_dm['mass'] = p_dm['mass'] * cosmo.rhoc_of_z()*Lbox**3
             print('Reading tipsy-file done!')
+
         elif (nbody_file_format=='TNG'):
             import illustris_python as il
             basePath = nbody_file_in
@@ -76,12 +77,15 @@ class IO_nbody:
             p_dm['vx'], p_dm['vy'], p_dm['vz'] = dm_vel[:,0], dm_vel[:,1], dm_vel[:,2]
             p_dm['phi'] = dm_pot
             print('Reading hdf5 file from IllustrisTNG done!')
+
         elif (nbody_file_format=='gadget'):
             print('Reading gadget files not implemented. Exit!')
             exit()
+
         else:
             print('Unknown file format. Exit!')
             exit()
+
         p_dm_list   = []
         for x_min in np.linspace(0,Lbox-L_chunk,N_chunk):
             x_max = x_min + L_chunk
@@ -133,6 +137,7 @@ class IO_nbody:
         p_star['y'][p_star['y']<0.0]  += Lbox
         p_star['z'][p_star['z']>Lbox] -= Lbox
         p_star['z'][p_star['z']<0.0]  += Lbox
+
         if (nbody_file_format=='tipsy' or nbody_file_format=='TNG'):
             try:
                 f = open(nbody_file_out, 'wb')
@@ -193,9 +198,11 @@ class IO_nbody:
             p_gas_mtype.tofile(f,sep='')
             p_dm_mtype.tofile(f,sep='')
             p_star_mtype.tofile(f,sep='')
+
         elif (nbody_file_format=='gadget'):
             print('Writing gadget files not implemented. Exit!')
             exit()
+
         else:
             print('Unknown file format. Exit!')
             exit()
@@ -235,6 +242,7 @@ class IO_halo:
             h = h[gID]
             h = h[h['Mvir']>param.code.Mhalo_min]        
             print('Nhalo = ',len(h['Mvir']))
+
         elif (halo_file_format=='ROCKSTAR-NPY'):
             try:
                 names = "ID,IDhost,Mvir,x,y,z,rvir"
@@ -250,6 +258,7 @@ class IO_halo:
             h = h[gID]
             h = h[h['Mvir']>param.code.Mhalo_min]
             print('Nhalo = ',len(h['Mvir']))
+
         elif (halo_file_format=='TNG'):
             import illustris_python as il
             basePath = halo_file_in
@@ -278,6 +287,7 @@ class IO_halo:
             h['IDhost'] = h_IDhost
             h = h[h['Mvir']>param.code.Mhalo_min]
             print('Nhalo = ',len(h['Mvir']))
+
         else:
             print('Unknown halo file format. Exit!')
             exit()
@@ -338,6 +348,7 @@ class IO_halo:
         h = h[h['y']>=0]
         h = h[h['z']>=0]
         halo_file_format = 'AHF-ASCII'
+
         if (halo_file_format=='AHF-ASCII'):
             h_dt = np.dtype([('ID', '<i8'), ('IDhost', '<i8'), ('numSubStruc', '<i8'), ('Mvir', '<f8'), ('Nvir', '<f8'),
                 ('x', '<f8'), ('y', '<f8'), ('z', '<f8'), ('vx', '<f8'), ('vy', '<f8'), ('vz', '<f8'),
@@ -379,6 +390,7 @@ class IO_halo:
             h_out['rvir']   = h['rvir']*1000.0
             h_out['cvir']   = h['cvir']
             np.savetxt(halo_file_out, h_out, delimiter='\t', newline='\n', header=header, comments='# ', encoding=None)
+            
         else:
             print("Try: halo_file_format==AHF-ASCII. No other formats implemented")
             exit()
