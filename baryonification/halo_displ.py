@@ -6,9 +6,9 @@ from numpy.lib.recfunctions import append_fields
 import schwimmbad
 
 from .constants import *
-from .profiles import *
+from .profiles import Profiles
 from .cosmo import CosmoCalculator
-from .io_utils import *
+from .io_utils import IO_nbody, IO_halo
 
 
 class HaloDisplacer:

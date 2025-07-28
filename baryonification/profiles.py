@@ -1,19 +1,12 @@
-"""
-
-PROFILES AND FRACTIONS FOR BARIONIC CORRECTIONS
-
-"""
-#from __future__ import print_function
-#from __future__ import division
-
 import numpy as np
 from scipy.special import erf
 from scipy.integrate import simpson
 from scipy.integrate import cumulative_trapezoid as cumtrapz
 from scipy.optimize import fsolve
 from scipy.interpolate import splrep,splev
+
 from .constants import *
-from .cosmo import *
+from .cosmo import CosmoCalculator
 
 
 def fstar_fct(Mvir, param, eta=0.3):

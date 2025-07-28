@@ -5,10 +5,10 @@ from numpy.lib.recfunctions import append_fields
 
 import schwimmbad
 
-from .cosmo import CosmoCalculator
 from .constants import *
+from .cosmo import CosmoCalculator
 from .profiles import Profiles
-from .io_utils import *
+from .io_utils import IO_nbody, IO_halo
 
 
 class ParticleDisplacer:
