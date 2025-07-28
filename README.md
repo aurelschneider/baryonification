@@ -1,6 +1,6 @@
 # Baryonification
 
-Code to modify gravity-only N-body simulations accounting for effects from gas, stars, and baryonic feedback on the density distribution. Component wise output for gas stars and dark matter. See https://arxiv.org/abs/2507.07892 for more information.
+Code to modify gravity-only N-body simulations accounting for effects from gas, stars, and baryonic feedback on the density distribution. Component-wise output for gas stars and dark matter. See https://arxiv.org/abs/2507.07892 for more information.
 An earlier version of the code can be found on Bitbucket (https://bitbucket.org/aurelschneider/baryonification/src/master/ with corresponding references https://arxiv.org/abs/1510.06034, https://arxiv.org/abs/1810.08629).
 
 ## Installation
@@ -41,12 +41,13 @@ The script below provides a minimal example to use the code:
     #Set number of chunks for paralleisation (N_chunk=i means 2^i chunks)
     par.sim.N_chunk = 2
 
-    #baryonify                                                                                                                                                                                                                                                                       
-    bfc.displace(par)
-
+    #baryonify
+    part_displ = bfc.ParticleDisplacer(par)
+    part_displ.displace()
+    
 All model parameters are defined in baryonification/params.py.
 
-Information about the analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
+Analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
 
     #import modules
     import baryonification as bfc
@@ -65,24 +66,27 @@ Information about the analytical profiles can be obtained directly without the n
     #mass and concetration of profile
     Mvir = 1e13
     cvir = 10
-    
-    #calculate thing related to 2-halo term
-    vc_r, vc_m, vc_var, vc_bias, vc_corr = bfc.cosmo(par)
+
+    cosmo = bfc.CosmoCalculator(par)
+    vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo.compute_cosmology()
+
     var_tck  = splrep(vc_m, vc_var, s=0)
     bias_tck = splrep(vc_m, vc_bias, s=0)
     corr_tck = splrep(vc_r, vc_corr, s=0)
+
     cosmo_var  = splev(Mvir,var_tck)
     cosmo_bias = splev(Mvir,bias_tck)
     cosmo_corr = splev(rbin,corr_tck)
 
     #calcualte fractions and density, mass, pressure, temperature profiles
-    frac, den, mass, press, temp = bfc.profiles(rbin,Mvir,cvir,cosmo_corr,cosmo_bias,cosmo_var,par)
+    profiles = bfc.Profiles(rbin, Mvir, cvir, cosmo_bias, cosmo_corr, cosmo_var, par)
+    frac, den, mass, pres, temp = profiles.calc_profiles()
 
     #plot density profiles
     fig = plt.figure(dpi=120)
-    plt.loglog(rbin,den['HGA'], color='blue', label='Hot gas profile')
+    plt.loglog(rbin,frac['HGA']*den['HGA'], color='blue', label='Hot gas profile')
     plt.loglog(rbin,den['DMO'], color='red', label='Dark matter profile')
-    plt.loglog(rbin,den['CGA']+den['SGA'], color='yellow', label='Stellar profile (central + satellites)')
+    plt.loglog(rbin,frac['CGA']*den['CGA'] + frac['SGA']*den['SGA'], color='yellow', label='Stellar profile (central + satellites)')
     plt.loglog(rbin,den['DMB'], color='black', label='Total profile (incl 2-halo term)')
     plt.legend()
     plt.show()
