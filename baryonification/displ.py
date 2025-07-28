@@ -7,7 +7,7 @@ import schwimmbad
 
 from .constants import *
 from .cosmo import CosmoCalculator
-from .profiles import Profiles
+from .profiles import Profiles, fstar_fct
 from .io_utils import IO_nbody, IO_halo
 
 
