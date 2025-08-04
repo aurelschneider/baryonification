@@ -146,7 +146,11 @@ class Profiles:
         """
         rco  = self.rvir
         w    = self.rbin/rco
-        return np.exp(-w)/self.rbin**3.0
+        uIGA = np.exp(-w) / self.rbin ** 3.0
+        rmin = 0.005 #Mpc/h
+        uIGA[self.rbin<rmin] = 1.0
+        return uIGA
+        #return np.exp(-w)/self.rbin**3.0
     
     def uCGA_fct(self):
         """
