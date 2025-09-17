@@ -48,16 +48,16 @@ def baryon_par():
         "mu": 0.3,        # beta(M,z): critical mass scale
         "ciga": 0.1,      # fraction of cold gas
         "nu": 0.0,        # beta(M,c): redshift dependence
-        "thco": 0.1,      # core factor thco=rco/rvir
+        "thco": 0.3,      # core factor thco=rco/rvir
         "alpha": 1.0,     # index in gas profile [default: 1.0]
         "gamma": 1.5,     # index in gas profile [default: 2.0]
         "delta": 7.0,     # index in gas profile [default: 7.0 -> same asympt. behav. than NFWtrunc profile]  
         "rcga": 0.03,     #0.015 # half-light radius of central galaxy (ratio to rvir)
-        "Nstar": 0.04,    # Stellar normalisation param [fstar = Nstar*(Mstar/Mvir)**eta]
+        "Nstar": 0.028,    # Stellar normalisation param [fstar = Nstar*(Mstar/Mvir)**eta]
         "Mstar": 2.5e11,  # Stellar critical mass [fstar = Nstar*(Mstar/Mvir)**eta]
-        "eta": 0.32,      # exponent of total stellar fraction [fstar = Nstar*(Mstar/Mvir)**eta]
-        "deta": 0.28,     # exponent of central stellar fraction [fstar = Nstar*(Mstar/Mvir)**(eta+deta)]
-        "a_nth": 0.18,    #Non-thermal pressure profile (P_nth = a_nth(b_nth(z))*(r/rvir)^n_nth): normalisation
+        "eta": 0.10,      # exponent of total stellar fraction [fstar = Nstar*(Mstar/Mvir)**eta]
+        "deta": 0.22,     # exponent of central stellar fraction [fstar = Nstar*(Mstar/Mvir)**(eta+deta)]
+        "a_nth": 0.001,    #Non-thermal pressure profile (P_nth = a_nth(b_nth(z))*(r/rvir)^n_nth): normalisation
         "n_nth": 0.8,     #Non-thermal pressure profile: power-law index
         "b_nth": 0.5,     #Non-thermal pressure profile: redshift evolution (b_nth = 0 means no z-evolution)
         }
@@ -101,7 +101,7 @@ def code_par():
         "q0_exp": 0.0,          # Exponent of adiabatic contraction param Q0
         "q1": 0.25,              # Adiabatic contraction model param Q1 = q1*(1+z)*q1_exp
         "q1_exp": 0.0,          # Exponent of adiabatic contraction param Q1
-        "q2": 0.8,              
+        "q2": 0.7,              
         "q2_exp": 0.0,
         "Mhalo_min": 2.5e11,    # Minimum halo mass [Msun/h]
         "disp_trunc": 0.01,     # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
