@@ -14,8 +14,7 @@ To download and install the package, type
 ## Quickstart
 
 The script below provides a minimal example to use the code:
-
-    #import module
+```python
     import baryonification as bfc
 
     #initialise parameters                                                                                                                                                                                                                                                                     
@@ -44,11 +43,13 @@ The script below provides a minimal example to use the code:
     #baryonify
     part_displ = bfc.ParticleDisplacer(par)
     part_displ.displace()
+```
     
 All model parameters are defined in baryonification/params.py.
 
 Analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
 
+```python
     import baryonification as bfc
     import numpy as np
     import matplotlib.pyplot as plt
@@ -91,7 +92,7 @@ Analytical profiles can be obtained directly without the need to baryonify. Here
     plt.ylabel('density [h^2 Msun/cMpc^3]')
     plt.legend()
     plt.show()
-
+```
 
     
 ## Contact
