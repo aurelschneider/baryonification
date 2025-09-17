@@ -446,9 +446,9 @@ class Profiles:
         P_e = ((2+2*Xe)/(3+5*Xe))*P_th
 
         #Gas and electron number density [1/(Mpc/h)^3]
-        mean_mol_weight = 0.6125
+        mean_mol_weight = 4/(3+5*Xe)
         n_gas = fhga*rhoHGA/(m_atom*h0*mean_mol_weight)
-        n_e   = (1 + Xe)/2 * fhga*rhoHGA/(m_atom*h0*mean_mol_weight)
+        n_e   = (1 + Xe)/2 * fhga*rhoHGA/(m_atom*h0)
 
         #gas and electron temperature
         T_gas = P_th/(n_gas * kB)  #[(km/s)^2*(Msun/h) * K/erg]
