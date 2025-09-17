@@ -1,6 +1,14 @@
 MANIFEST.in
 README.rst
-setup.py
+pyproject.toml
+./baryonification/__init__.py
+./baryonification/constants.py
+./baryonification/cosmo.py
+./baryonification/displ.py
+./baryonification/halo_displ.py
+./baryonification/io_utils.py
+./baryonification/params.py
+./baryonification/profiles.py
 baryonification/__init__.py
 baryonification/constants.py
 baryonification/cosmo.py
@@ -9,10 +17,8 @@ baryonification/halo_displ.py
 baryonification/io_utils.py
 baryonification/params.py
 baryonification/profiles.py
-baryonification/test.py
 baryonification.egg-info/PKG-INFO
 baryonification.egg-info/SOURCES.txt
 baryonification.egg-info/dependency_links.txt
-baryonification.egg-info/not-zip-safe
 baryonification.egg-info/requires.txt
 baryonification.egg-info/top_level.txt

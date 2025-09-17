@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baryonification"
+version = "1.0"
+description = "A baryonification package for astrophysical modeling"
+authors = [
+  { name="Aurel Schneider", email="schneider.duhem@gmail.com" }
+]
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.8",
+    "schwimmbad",
+    "matplotlib"
+    ]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools]
+packages = ["baryonification"]
+
+[tool.setuptools.package-dir]
+"" = "."

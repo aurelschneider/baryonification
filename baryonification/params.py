@@ -46,12 +46,11 @@ def baryon_par():
     par = {
         "Mc": 3.0e13,     # beta(M,z): critical mass scale
         "mu": 0.3,        # beta(M,z): critical mass scale
-        "ciga": 0.0,      # fraction of cold gas
+        "ciga": 0.1,      # fraction of cold gas
         "nu": 0.0,        # beta(M,c): redshift dependence
-        #"thej": 4.0,      # ejection factor thej=rej/rvir
         "thco": 0.1,      # core factor thco=rco/rvir
         "alpha": 1.0,     # index in gas profile [default: 1.0]
-        "gamma": 2.0,     # index in gas profile [default: 2.0]
+        "gamma": 1.5,     # index in gas profile [default: 2.0]
         "delta": 7.0,     # index in gas profile [default: 7.0 -> same asympt. behav. than NFWtrunc profile]  
         "rcga": 0.03,     #0.015 # half-light radius of central galaxy (ratio to rvir)
         "Nstar": 0.04,    # Stellar normalisation param [fstar = Nstar*(Mstar/Mvir)**eta]
@@ -84,10 +83,10 @@ def code_par():
         "multicomp": True,       #individual displacement of collisionless matter and stars/gas?
         "satgal": True,          #satellite galaxies treated explicitely (only used in multicomp model).
         "adiab_exp": True,       #Adiabatic expansion (turned on in default model)
-        "spher_corr": True,      #Sphericity correction (currently only in multicomp model)
+        "spher_corr": False,      #Sphericity correction (currently only in multicomp model)
         "spher_amplitude": 1.0,  #Amplitude of the sphericity correciotn A=[0,1]
         "spher_scale": 1.0,      #Scale of sphericity correction (r_scale = spher_scale*rvir)
-        "spher_powerlaw": 1.0,   #Power-law of the transition 
+        "spher_powerlaw": 10.0,   #Power-law of the transition 
         "kmin": 0.01,
         "kmax": 100.0,
         "rmin": 0.005,
@@ -95,18 +94,18 @@ def code_par():
         "Nrbin": 100,
         "rbuffer": 10.0,        # buffer size to take care of boundary conditions
         "eps0": 4.0,            # truncation factor: eps=rtr/rvir with eps = eps0 - eps1*nu
-        "eps1": 0.0,            # eps1=0 corresponds to the old case
+        "eps1": 0.5,            # eps1=0 corresponds to the old case
         "beta_model": 1,        # 0: old model from Schneider+18 1: new model
         "AC_model": 5,          # 0: Abadi2010, 1: Velmani&Paranjape2023, 2:stepfct followed by AC, 5: empirical model (default)
         "q0": 0.075,            # Adiabatic contraction model param Q0 = q0*(1+z)*q0_exp
         "q0_exp": 0.0,          # Exponent of adiabatic contraction param Q0
-        "q1": 0.2,              # Adiabatic contraction model param Q1 = q1*(1+z)*q1_exp
+        "q1": 0.25,              # Adiabatic contraction model param Q1 = q1*(1+z)*q1_exp
         "q1_exp": 0.0,          # Exponent of adiabatic contraction param Q1
         "q2": 0.8,              
         "q2_exp": 0.0,
-        "Mhalo_min": 1.0e12,    # Minimum halo mass [Msun/h]
+        "Mhalo_min": 2.5e11,    # Minimum halo mass [Msun/h]
         "disp_trunc": 0.01,     # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
-        "halo_excl": 0.5        # halo exclusion parameter (no exclusion = large number e.g. 1000)
+        "halo_excl": 0.4        # halo exclusion parameter (no exclusion = large number e.g. 1000)
         }
     return Bunch(par)
 

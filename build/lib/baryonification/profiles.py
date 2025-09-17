@@ -1,19 +1,12 @@
-"""
-
-PROFILES AND FRACTIONS FOR BARIONIC CORRECTIONS
-
-"""
-#from __future__ import print_function
-#from __future__ import division
-
 import numpy as np
 from scipy.special import erf
 from scipy.integrate import simpson
 from scipy.integrate import cumulative_trapezoid as cumtrapz
 from scipy.optimize import fsolve
 from scipy.interpolate import splrep,splev
+
 from .constants import *
-from .cosmo import *
+from .cosmo import CosmoCalculator
 
 
 def fstar_fct(Mvir, param, eta=0.3):
@@ -153,7 +146,11 @@ class Profiles:
         """
         rco  = self.rvir
         w    = self.rbin/rco
-        return np.exp(-w)/self.rbin**3.0
+        uIGA = np.exp(-w) / self.rbin ** 3.0
+        rmin = 0.005 #Mpc/h
+        uIGA[self.rbin<rmin] = 1.0
+        return uIGA
+        #return np.exp(-w)/self.rbin**3.0
     
     def uCGA_fct(self):
         """
@@ -449,9 +446,9 @@ class Profiles:
         P_e = ((2+2*Xe)/(3+5*Xe))*P_th
 
         #Gas and electron number density [1/(Mpc/h)^3]
-        mean_mol_weight = 0.6125
+        mean_mol_weight = 4/(3+5*Xe)
         n_gas = fhga*rhoHGA/(m_atom*h0*mean_mol_weight)
-        n_e   = (1 + Xe)/2 * fhga*rhoHGA/(m_atom*h0*mean_mol_weight)
+        n_e   = (1 + Xe)/2 * fhga*rhoHGA/(m_atom*h0)
 
         #gas and electron temperature
         T_gas = P_th/(n_gas * kB)  #[(km/s)^2*(Msun/h) * K/erg]
