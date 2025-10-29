@@ -111,6 +111,11 @@ class Profiles:
             dslope = 3.0
             beta = dslope * (self.Mvir / Mc) ** mu / (1 + (self.Mvir / Mc) ** mu)
 
+        elif (self.param.code.beta_model == 2):
+            # if beta serves directly as an input param of bfc,
+            # usually for a single mass bin
+            beta = self.param.baryon.beta
+        
         else:
             print('ERROR: beta model not defined!')
             exit()

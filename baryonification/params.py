@@ -46,6 +46,7 @@ def baryon_par():
     par = {
         "Mc": 3.0e13,     # beta(M,z): critical mass scale
         "mu": 0.3,        # beta(M,z): critical mass scale
+        "beta": 3.0,      # can be used instead of beta(M,z)
         "ciga": 0.1,      # fraction of cold gas
         "nu": 0.0,        # beta(M,c): redshift dependence
         "thco": 0.1,      # core factor thco=rco/rvir
