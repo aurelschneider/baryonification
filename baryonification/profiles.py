@@ -39,6 +39,19 @@ class Profiles:
         self.rvir  = (3.0 * Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
         self.z     = self.param.cosmo.z
         
+    def _update_params(self, param_dict):
+        """
+        Update parameters from a dictionary.
+        """
+        for key, value in param_dict.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+                # recompute rvir if Mvir is passed
+                if key == 'Mvir':
+                    self.rvir  = (3.0 * self.Mvir / (4.0 * np.pi * DELTAVIR * self.cosmo.rhoc_of_z())) ** (1.0 / 3.0)
+            else:
+                raise AttributeError(f"Parameter '{key}' not found in Profiles.")
+
     def uNFWtr_fct(self, t):
         """
         Truncated NFW density profile. Normalised.
@@ -188,7 +201,7 @@ class Profiles:
         Calculates fractions, density and mass profiles as a function of radius
         Returns a dictionary
         """
-
+        
         #Cosmological params
         Om = self.param.cosmo.Om
         Ob = self.param.cosmo.Ob

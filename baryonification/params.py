@@ -76,6 +76,13 @@ def io_files():
         "halofile_out": 'halofile_out.dat',
         "halofile_format": 'AHF-ASCII',
         "TNGnumber": 99,   #number of TNG files
+
+        # added for shell baryonification
+        "halolc_format": 'CosmoGrid_nersc',  # format of the input halo lightcone
+        "halolc_in": 'halolc_in.std',
+        "shellfile_format": 'CosmoGrid_nersc',       # format of the input lightcone shell
+        "shellfile_in": 'shellfile_in.std',
+        "shellfile_out": 'shellfile_out.std',
     }
     return Bunch(par)
 
@@ -106,7 +113,24 @@ def code_par():
         "q2_exp": 0.0,
         "Mhalo_min": 2.5e11,    # Minimum halo mass [Msun/h]
         "disp_trunc": 0.01,     # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
-        "halo_excl": 0.4        # halo exclusion parameter (no exclusion = large number e.g. 1000)
+        "halo_excl": 0.4,        # halo exclusion parameter (no exclusion = large number e.g. 1000)
+
+        # added for shell baryonification
+        "nbrhalo": 0,
+        "max_shell": 1,         # largest shell id to be displaced
+        "min_shell": 0,         # smallest shell id to be displaced
+        "nside": 2048,          # resolution of the input shell
+        "nside_out": 512,       # resolution of the output shell
+        "mesh_ref": 3,          # apply mesh refinement for pixels near halo center
+        "imf": True,            # ??
+        "interp": False,        # ?
+        "Gaussian_interp": False,# ?
+        "mass_threshold": 10,    #Mass threshold for performing mesh refinement
+        "mass_threshold_2":10,
+        "mass_threshold_3":None,
+        "cur_radi":400,
+
+
         }
     return Bunch(par)
 

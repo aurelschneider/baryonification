@@ -14,7 +14,10 @@ dependencies = [
     "numpy>=1.21",
     "scipy>=1.8",
     "schwimmbad",
-    "matplotlib"
+    "matplotlib",
+    "h5py",
+    "healpy",
+    "tqdm",
     ]
 
 [project.optional-dependencies]

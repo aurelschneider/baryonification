@@ -6,6 +6,8 @@ PRINT INFORMATION INTO TEMPORARY FILE
 
 import numpy as np
 from scipy import spatial
+import h5py
+import healpy as hp
 from scipy.interpolate import splrep,splev
 from numpy.lib.recfunctions import append_fields
 
@@ -13,6 +15,7 @@ import schwimmbad
 
 from .constants import *
 from .profiles import *
+from .shell_utils import *
 
 
 class IO_nbody:
@@ -395,3 +398,195 @@ class IO_halo:
             print("Try: halo_file_format==AHF-ASCII. No other formats implemented")
             exit()
         return
+
+
+
+class IO_shell:
+    """
+    Class for N-body file I/O operations.
+    """
+    def __init__(self, param):
+        self.param = param
+        self.CosmoCalculator = CosmoCalculator(param)
+
+    def read_healpix_file(self):
+        """
+        Read in lightcone healpix, adopt units.
+        """
+        shell_file_in = self.param.files.shellfile_in
+        halo_lc_file = self.param.files.halolc_in
+        shell_file_format = self.param.files.shellfile_format
+        halo_lc_file_format = self.param.files.halolc_format
+        nside = self.param.code.nside
+        npix = hp.nside2npix(nside)
+        max_shell = self.param.code.max_shell
+        min_shell = self.param.code.min_shell
+        shells = {}
+        
+        if shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid':
+            shell_file = np.load(shell_file_in)
+            shell_data = shell_file['shells']
+            lchalo_file = np.load(halo_lc_file)
+            shell_info = lchalo_file['shell_info']
+            shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            for i in shell_id:
+                pixels = shell_data[i, :]
+                shells[i] = pixels
+            print('Read healpix file done!')
+        elif shell_file_format == 'CosmoGrid_nersc' and halo_lc_file_format == 'CosmoGrid_nersc':
+            shell_file = h5py.File(shell_file_in,'r')
+            with h5py.File(halo_lc_file,'r') as lchalo_file:
+                shell_info = lchalo_file["/shell_data"][:]
+                shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            for i in shell_id:
+                pixels = shell_file["/nobaryon_shells/shell{:03d}".format(i)][:]
+                shells[i] = pixels
+            shell_file.close()
+            print('Read healpix file done!')
+        elif shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid_nersc':
+            # with better halos, but higher-res z-shells
+            shell_file = np.load(shell_file_in)
+            shell_data = shell_file['shells']
+            with h5py.File(halo_lc_file,'r') as lchalo_file:
+                shell_info = lchalo_file["/shell_data"][:]
+                shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            for i in shell_id:
+                pixels = shell_data[i, :]
+                shells[i] = pixels
+            print('Read healpix file done!')
+        elif shell_file_format == 'box_replication':
+            shell_data   = np.load(shell_file_in)  ["shells"]
+            shell_id = range(min_shell,max_shell)
+            for i in shell_id:
+                dmo_pixels   = shell_data[i]
+                shells[i] = dmo_pixels
+        else:
+            print("Other format not supported")
+            exit()
+        map_list = [shells[i] for i in shell_id]
+        return shell_id, map_list
+
+    def read_halo_lc_file(self):
+        """
+        Read in halo lightcone
+        """
+        halo_lc_file = self.param.files.halolc_in
+        halo_lc_file_format = self.param.files.halolc_format
+        max_shell = self.param.code.max_shell
+        min_shell = self.param.code.min_shell
+        if (halo_lc_file_format == 'CosmoGrid'):
+            lchalo_file = np.load(halo_lc_file)
+            shell_info = lchalo_file['shell_info']
+            shell_comoving_dis = shell_info['shell_com']
+            thickness = shell_info['upper_com'] - shell_info['lower_com']
+            redshift = (shell_info['lower_z'] + shell_info['upper_z'])/2
+            lchalo = lchalo_file['halos']
+            shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            #halo data
+            h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
+            halo_shell = {}
+            
+            for i in shell_id:
+                self.param.cosmo.z = redshift[i]
+                #is buffer region included
+                select_halo = lchalo[lchalo['shell_id']==i]
+                h = np.zeros(len(select_halo['x']),dtype=h_dt)
+                h['ID'] = select_halo['ID']
+                h['IDhost'] = select_halo['IDhost']
+                # we project the halo coordinates
+                norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
+                h['cov'] = norm / 1000
+                shell_cov = shell_comoving_dis[i]
+                h['x'] = select_halo['x'] * shell_cov / norm
+                h['y'] = select_halo['y'] * shell_cov / norm
+                h['z'] = select_halo['z'] * shell_cov / norm
+                #read Mvir, cvir, rvir
+                h['Mvir'] =  select_halo['Mvir']
+                h['rvir'] = select_halo['rvir'] / 1000 * (1+self.param.cosmo.z)
+                h['cvir'] = select_halo['cvir']
+                h = h[h['Mvir'] > self.param.code.Mhalo_min]
+                halo_shell[i] = h
+            print("Read halo file done!")
+            del lchalo_file, lchalo, h
+        elif (halo_lc_file_format == 'CosmoGrid_nersc'):
+            lchalo_file = h5py.File(halo_lc_file,'r')
+            shell_info = lchalo_file["/shell_data"][:]
+        
+            shell_comoving_dis = shell_info['shell_com']
+            thickness = shell_info['upper_com'] - shell_info['lower_com']
+            redshift = (shell_info['lower_z'] + shell_info['upper_z'])/2
+            shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            
+            #halo data
+            h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
+            halo_shell = {}
+            halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
+            
+            for i in shell_id:
+                self.param.cosmo.z = redshift[i]
+                halos_pos = lchalo_file["/shell{:03d}/halo_pos".format(i)][:]
+                halos_props = lchalo_file["/shell{:03d}/halo_props".format(i)][:]
+                #is buffer region included
+                # select only buffer=0 halos (from [-1,0,1] available in the nersc format)
+                mask_buffer0 = (halos_pos['halo_buffer'] == 0)
+                
+                # filter halos
+                masses = halos_props[halos_pos['uid']]['m_200c']
+                radii = (3*masses/(4*np.pi*200*self.CosmoCalculator.rhoc_of_z()))**(1/3)#halos_props[halos_pos['uid']]['r_200c'] # fix radii, as rhoc now is 2.775e11 at all redshifts
+                concentrations = halos_props[halos_pos['uid']]['c_200c']
+                IDs = halos_props[halos_pos['uid']]['ID']
+                select_masses = masses[mask_buffer0]
+                select_radii = radii[mask_buffer0]
+                select_concentrations = concentrations[mask_buffer0]
+                select_IDs = IDs[mask_buffer0] 
+                select_halo = halos_pos[mask_buffer0] 
+                
+                
+                h = np.zeros(len(select_halo['x']),dtype=h_dt)
+                h['ID'] = select_IDs
+                # host halo status needs to be obtained from the old cosmogrid file
+                select_halos_old = halos_cosmogrid_old['halos'][halos_cosmogrid_old['halos']['shell_id'] == i]
+
+                h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
+                # print('IDhosts:', h['IDhost'])
+                # we project the halo coordinates
+                norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
+                # print('norm:', norm)
+                h['cov'] = norm / 1000
+                shell_cov = shell_comoving_dis[i]
+                h['x'] = select_halo['x'] * shell_cov / norm
+                h['y'] = select_halo['y'] * shell_cov / norm
+                h['z'] = select_halo['z'] * shell_cov / norm
+                #read Mvir, cvir, rvir
+                h['Mvir'] =  select_masses
+                h['rvir'] = select_radii
+                h['cvir'] = select_concentrations
+                h = h[h['Mvir'] > self.param.code.Mhalo_min]
+                halo_shell[i] = h
+            print("Read halo file done!")
+            lchalo_file.close()
+            del h, halos_cosmogrid_old
+        else:
+            print("Other halo file formats not supported")
+        h_list = [halo_shell[i] for i in shell_id]
+        thickness_list = [thickness[i] for i in shell_id]
+        redshift_list = [redshift[i] for i in shell_id]
+        return h_list, thickness_list, redshift_list
+
+    def write_shell_file(self,gas_shell,dm_shell,star_shell):
+        '''
+        write output healpix file.
+        '''
+        shell_file_out = self.param.files.shellfile_out
+        with h5py.File(shell_file_out, 'w') as f:
+            save_dict_to_hdf5(f, 'dm', dm_shell)
+            save_dict_to_hdf5(f, 'gas', gas_shell)
+            save_dict_to_hdf5(f, 'star', star_shell)
+            print(f"data saved to {shell_file_out}")
+        return
+
