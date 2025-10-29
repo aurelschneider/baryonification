@@ -466,7 +466,14 @@ class IO_shell:
         else:
             print("Other format not supported")
             exit()
+        print('shells:',shells)
         map_list = [shells[i] for i in shell_id]
+        # check tthe consistency of the shell length with nside
+        for key, val in shells.items():
+            n_pix = len(val)
+            break
+        n_side = hp.npix2nside(n_pix)
+        assert n_side == self.param.code.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.code.nside}"
         return shell_id, map_list
 
     def read_halo_lc_file(self):
