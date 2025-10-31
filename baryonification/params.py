@@ -116,19 +116,21 @@ def code_par():
         "halo_excl": 0.4,        # halo exclusion parameter (no exclusion = large number e.g. 1000)
 
         # added for shell baryonification
-        "nbrhalo": 0,
+        "nbrhalo": 0,           #0: no neighboring halo treatment
+                                #1: displace gas in neighboring halo using dm displacement function
         "max_shell": 1,         # largest shell id to be displaced
         "min_shell": 0,         # smallest shell id to be displaced
         "nside": 2048,          # resolution of the input shell
         "nside_out": 512,       # resolution of the output shell
-        "mesh_ref": 3,          # apply mesh refinement for pixels near halo center
-        "imf": True,            # ??
-        "interp": False,        # ?
-        "Gaussian_interp": False,# ?
-        "mass_threshold": 10,    #Mass threshold for performing mesh refinement
-        "mass_threshold_2":10,
-        "mass_threshold_3":None,
-        "cur_radi":400,
+        "mesh_ref": 3,          #0: no mesh refinement
+                                #1: apply mesh refinement for large mass pixels
+                                #2: apply mesh refinement near halo centers
+                                #3: apply mesh refinement near halo centers, weighted using projected NFW profile
+        "interp": True,         #Apply linear interpolation when collecting displaced particles back to map
+        "mass_threshold": 80,     #Mass threshold for performing mesh refinement 1
+        "mass_threshold_2":150,   #Mass threshold for performing mesh refinement 1
+        "mass_threshold_3":None, #Mass threshold for performing mesh refinement 1
+        "cur_radi":400,         #Radius under which curvature correction is applied
 
 
         }
