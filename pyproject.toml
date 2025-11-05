@@ -14,7 +14,8 @@ dependencies = [
     "numpy>=1.21",
     "scipy>=1.8",
     "schwimmbad",
-    "matplotlib"
+    "matplotlib",
+    "request"
     ]
 
 [project.optional-dependencies]
