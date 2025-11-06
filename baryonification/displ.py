@@ -1,10 +1,14 @@
 import numpy as np
 from scipy import spatial
+import pickle as pkl
 from scipy.interpolate import splrep,splev
 from numpy.lib.recfunctions import append_fields
 
 import schwimmbad
+import multiprocessing
+import gc
 from tqdm import tqdm
+from time import time
 
 from .constants import *
 from .cosmo import CosmoCalculator
@@ -49,19 +53,10 @@ class ParticleDisplacer:
             p_header['Ngas'] = p_header['Npart']
             p_header['Npart'] = int(2 * p_header['Npart'])
 
-        if N_cpu == 1:
-            displ_p = self.displace_chunk(p_header, p_list[0], h_list[0])
-            p_gas_displ = [displ_p[0]]
-            p_dm_displ = [displ_p[1]]
-            p_star_displ = [displ_p[2]]
-        elif N_cpu > 1:
-            pool = schwimmbad.choose_pool(mpi=False, processes=N_cpu)
-            tasks = list(zip(p_list, h_list, np.repeat(p_header, N_cpu)))
-            displ_p = np.array(pool.map(self.worker, tasks))
-            p_gas_displ = displ_p[:, 0]
-            p_dm_displ = displ_p[:, 1]
-            p_star_displ = displ_p[:, 2]
-            pool.close()
+        displ_p = self.displace_chunk(p_header, p_list[0], h_list[0])
+        p_gas_displ = [displ_p[0]]
+        p_dm_displ = [displ_p[1]]
+        p_star_displ = [displ_p[2]]
 
         
         #combine chunks
@@ -192,8 +187,9 @@ class ParticleDisplacer:
             print("Nhalo_chunk = ", len(h_chunk['Mvir']))
 
             #Loop over haloes, calculate displacement, and displace partricles
-            for i in range(len(h_chunk['Mvir'])):
-
+            
+            # for i in range(len(h_chunk['Mvir'])):
+            for i in tqdm(idx_local):
                 #select host haloes (subhaloes >= 1)
                 if (h_chunk['IDhost'][i] < 0):
                     
@@ -307,18 +303,18 @@ class ParticleDisplacer:
                             DrpBAR_nbrhaloes    = splev(rpBAR_nbrhaloes,DFDM_tck,der=0,ext=1)
                             DrpBAR_wo_nbrhaloes = splev(rpBAR_wo_nbrhaloes,DBAR_tck,der=0,ext=1)
                             #DrpBAR_wo_nbrhaloes = DBAR_tck(rpBAR_wo_nbrhaloes, extrapolate=False)
-                            DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-h_chunk['x'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-h_chunk['y'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-h_chunk['z'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-h_chunk['x'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-h_chunk['y'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-h_chunk['z'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                            return_dict_DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-h_chunk['x'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                            return_dict_DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-h_chunk['y'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                            return_dict_DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-h_chunk['z'][i])*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                            return_dict_DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-h_chunk['x'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                            return_dict_DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-h_chunk['y'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                            return_dict_DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-h_chunk['z'][i])*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
                         else:
                             DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
                             #DrpBAR = DBAR_tck(rpBAR, extrapolate=False)
-                            DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-h_chunk['x'][i])*DrpBAR/rpBAR
-                            DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-h_chunk['y'][i])*DrpBAR/rpBAR
-                            DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-h_chunk['z'][i])*DrpBAR/rpBAR
+                            return_dict_DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-h_chunk['x'][i])*DrpBAR/rpBAR
+                            return_dict_DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-h_chunk['y'][i])*DrpBAR/rpBAR
+                            return_dict_DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-h_chunk['z'][i])*DrpBAR/rpBAR
 
                         if (self.param.code.spher_corr==True):
 
@@ -417,11 +413,11 @@ class ParticleDisplacer:
                         
                         #Add temperature
                         TrpBAR = splev(rpBAR,TGAS_tck,der=0,ext=1)
-                        DpBAR['temp'][ipbool] += TrpBAR
+                        return_dict_DpBAR['temp'][ipbool] += TrpBAR
 
                         #Add electron pressure
                         PrpBAR = splev(rpBAR,PGAS_tck,der=0,ext=1)
-                        DpBAR['pres'][ipbool] += PrpBAR
+                        return_dict_DpBAR['pres'][ipbool] += PrpBAR
 
                         
                         #separate baryons into gas and stars
@@ -564,6 +560,7 @@ class ParticleDisplacer:
                                         DpBAR['id'][ipbool_wo_nbrhaloes] += setID
                                     else:
                                         DpBAR['id'][ipbool] += setID
+            
 
             #Displace particles and separarte BAR into HGA, CGA, SGA
             p_baryons['x'] += DpBAR['x']
@@ -784,9 +781,27 @@ class ShellDisplacer:
             
         tasks = [(i, map_list[i], h_list[i], self.param) for i in range(num_processes)]
         print(f"Sampling particles in parallel, number of processes: {num_processes}")
-        pool = schwimmbad.choose_pool(mpi=False, processes=num_processes)
-        results = list(pool.map(particle_worker, tasks))
-        pool.close()
+        # pool = schwimmbad.choose_pool(mpi=False, processes=num_processes)
+        # results = list(pool.map(particle_worker, tasks))
+        # pool.close()
+        results = []
+        for i_proc in range(num_processes):
+            t1 = time()
+            print(f"Sampling particles for shell {i_proc+1}/{num_processes}")
+            if os.path.exists(f"./tmp/particle_sampling_shell_{self.param.code.min_shell+i_proc}.pkl"):
+                print(f"Found existing particle sampling for shell {self.param.code.min_shell+i_proc}, loading from disk.")
+                with open(f"./tmp/particle_sampling_shell_{self.param.code.min_shell+i_proc}.pkl", "rb") as pkl_file:
+                    result = pkl.load(pkl_file)
+            else:
+                result = particle_worker(tasks[i_proc])
+            
+            # store subsampled particles to disk
+            with open(f"./tmp/particle_sampling_shell_{self.param.code.min_shell+i_proc}.pkl", "wb") as pkl_file:
+                pkl.dump(result, pkl_file)
+            
+            results.append(result)
+            t2 = time()
+            print(f"[perform_get_particle] Time taken: {t2 - t1:.2f} seconds")
 
         particle_shell = {i: p for i, p in results}
         return [particle_shell[i] for i in sorted(particle_shell.keys())]
@@ -803,21 +818,17 @@ class ShellDisplacer:
 
         tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, np.repeat(self.param,num_processes)))
         print(f"Number of tasks: {len(tasks)}")
-        pool = schwimmbad.choose_pool(mpi=False, processes=num_processes)
 
-        results = list(pool.map(self.loop_halos, tasks))
-        if num_processes == 1:
-            result = results[0]
-            gasdata[0] = result[1]
-            dmdata[0] = result[2]
-            stardata[0] = result[3]
-        elif num_processes > 1:
-            for result in results:
-                i = result[0]
-                gasdata[i] = result[1]
-                dmdata[i] = result[2]
-                stardata[i] = result[3]
-        pool.close()
+        for i_proc in range(num_processes):
+            t1 = time()
+            print(f"Processing shell {i_proc+1}/{num_processes}")
+            result = self.loop_halos(tasks[i_proc])
+            i_shell = result[0]
+            gasdata[i_shell] = result[1]
+            dmdata[i_shell] = result[2]
+            stardata[i_shell] = result[3]
+            t2 = time()
+            print(f"[displace_shell] Time taken: {t2 - t1:.2f} seconds")
         return gasdata, dmdata, stardata
 
     def loop_halos(self, task):
@@ -826,10 +837,11 @@ class ShellDisplacer:
         '''
         cosmo_calculator = CosmoCalculator(self.param)
         # dummy init
-        profiles = Profiles(None, 1e13, None, None, None, None, self.param)
+        # profiles = Profiles(None, 1e13, None, None, None, None, self.param)
         particle_displacer = ParticleDisplacer(self.param)
 
         shell_id, h, thickness, p, redshift, param = task
+        print(f'{len(h)} halos in current task')
         
         shell_cov = (h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)**0.5
         param.cosmo.z = redshift
@@ -838,10 +850,6 @@ class ShellDisplacer:
         bias_tck = splrep(vc_m, vc_bias, s=0)
         corr_tck = splrep(vc_r, vc_corr, s=0)
 
-        #Ready for computing the displacemnet
-        Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),("id",'>f4')])
-        DpBAR = np.zeros(len(p),dtype=Dp_type)
-        DpFDM = np.zeros(len(p),dtype=Dp_type)
 
         #build tree for dm and baryons, separate particles
         #id of all halo particle (ihalo=0 means field particles)
@@ -859,218 +867,300 @@ class ShellDisplacer:
         #separating particles
         p_darkmatter = p.copy()
         p_baryons = p.copy()
+        n_p = len(p)
         del p
         
-        store_info = []
-        for j in tqdm(range(len(h['Mvir']))):
+        def loop_cpus(i_cpu,idx_local,return_dict_DpBAR, return_dict_DpFDM):
+            profiles = Profiles(None, 1e13, None, None, None, None, self.param)
+            #Ready for computing the displacemnet
+            Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),("id",'>f4')])
+            DpBAR = np.zeros(n_p,dtype=Dp_type)
+            DpFDM = np.zeros(n_p,dtype=Dp_type)
             
-            #select host haloes (subhaloes >= 1)
-            if (h['IDhost'][j] < 0):
-                hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
-                h_cov = h['cov'][j]
-                Mvir, rvir, cvir = h['Mvir'][j], h['rvir'][j], h['cvir'][j]
-
-                # print('start halo: ', j)
-
-                #range where we consider displacement
-                rmax = param.code.rmax
-                rmin = (0.001*rvir if 0.001*rvir>param.code.rmin else param.code.rmin)
-                rmax = (20.0*rvir if 20.0*rvir<param.code.rmax else param.code.rmax)
-                rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
-
-                #load 3D profiles
-                cosmo_var  = splev(Mvir,var_tck)
-                cosmo_bias = splev(Mvir,bias_tck)
-                cosmo_corr = splev(rbin,corr_tck)
-                profiles._update_params({'rbin': rbin, 'Mvir': Mvir, 'cvir': cvir, 'cosmo_corr': cosmo_corr, 'cosmo_bias': cosmo_bias, 'cosmo_var': cosmo_var})
-                frac, dens, mass, press, temp = profiles.calc_profiles()
-
-                #project 3D profiles
-                rhoBAR_i = (1-frac['CDM'])*(dens['NFW'] + dens['BG'])
-                rhoBAR_f = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA'] + (1-frac['CDM'])*dens['BG']
-                rhoDM_i = frac['CDM']*(dens['NFW'] + dens['BG'])
-                rhoDM_f = frac['CDM']*(dens['CDM'] + dens['BG'])
+            print(f'process {i_cpu} starting with {len(idx_local)} halos')
+            # for j in tqdm(idx_local, desc=f"CPU {i_cpu} processing halos", position=i_cpu):
+            for j in tqdm(idx_local):
                 
-                #line of sight integration
-                projected_MDM_i = projection(rhoDM_i,rbin,rvir,thickness,param, output='mass')
-                projected_MDM_f = projection(rhoDM_f,rbin,rvir,thickness,param, output='mass')
-                projected_MBAR_i = projection(rhoBAR_i,rbin,rvir,thickness,param, output='mass')
-                projected_MBAR_f = projection(rhoBAR_f,rbin,rvir,thickness,param, output='mass')
+                #select host haloes (subhaloes >= 1)
+                if (h['IDhost'][j] < 0):
+                    hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
+                    h_cov = h['cov'][j]
+                    Mvir, rvir, cvir = h['Mvir'][j], h['rvir'][j], h['cvir'][j]
 
-                #displacement functions
-                DBAR = particle_displacer.displ(rbin, projected_MBAR_i, projected_MBAR_f)
-                DFDM = particle_displacer.displ(rbin, projected_MDM_i, projected_MDM_f)
-                # print(DBAR, DFDM)
-                imf = impact_factor(h_cov, shell_cov, thickness, 4*rvir)
-                DBAR *= imf
-                DFDM *= imf
-                # print(DBAR, DFDM,imf)   
-                DBAR_tck = splrep(rbin, DBAR,s=0,k=3)
-                DFDM_tck = splrep(rbin, DFDM,s=0,k=3)
+                    # print('start halo: ', j)
+
+                    #range where we consider displacement
+                    rmax = param.code.rmax
+                    rmin = (0.001*rvir if 0.001*rvir>param.code.rmin else param.code.rmin)
+                    rmax = (20.0*rvir if 20.0*rvir<param.code.rmax else param.code.rmax)
+                    rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
+
+                    #load 3D profiles
+                    cosmo_var  = splev(Mvir,var_tck)
+                    cosmo_bias = splev(Mvir,bias_tck)
+                    cosmo_corr = splev(rbin,corr_tck)
+                    profiles._update_params({'rbin': rbin, 'Mvir': Mvir, 'cvir': cvir, 'cosmo_corr': cosmo_corr, 'cosmo_bias': cosmo_bias, 'cosmo_var': cosmo_var})
+                    frac, dens, mass, press, temp = profiles.calc_profiles()
+
+                    #project 3D profiles
+                    rhoBAR_i = (1-frac['CDM'])*(dens['NFW'] + dens['BG'])
+                    rhoBAR_f = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA'] + (1-frac['CDM'])*dens['BG']
+                    rhoDM_i = frac['CDM']*(dens['NFW'] + dens['BG'])
+                    rhoDM_f = frac['CDM']*(dens['CDM'] + dens['BG'])
                     
-                smallestD = param.code.disp_trunc #Mpc/h
-                # print(DBAR, DFDM, smallestD)   
-                #array of idx with DBAR > Dsmallest
-                idx_BAR = np.where(abs(DBAR) > smallestD)
-                idx_BAR = idx_BAR[:][0]
-                if (len(idx_BAR)>1):
-                    idx_largest = idx_BAR[-1]
-                    rball_BAR = rbin[idx_largest]
-                else:
-                    rball_BAR = 0.0
+                    #line of sight integration
+                    projected_MDM_i = projection(rhoDM_i,rbin,rvir,thickness,param, output='mass')
+                    projected_MDM_f = projection(rhoDM_f,rbin,rvir,thickness,param, output='mass')
+                    projected_MBAR_i = projection(rhoBAR_i,rbin,rvir,thickness,param, output='mass')
+                    projected_MBAR_f = projection(rhoBAR_f,rbin,rvir,thickness,param, output='mass')
 
-                #array of idx with DFDM > Dsmallest
-                idx_FDM = np.where(abs(DFDM) > smallestD)
-                idx_FDM = idx_FDM[:][0]
-                if (len(idx_FDM)>1):
-                    idx_largest = idx_FDM[-1]
-                    rball_FDM = rbin[idx_largest]
-                else:
-                    rball_FDM = 0.0
-
-                #largest rball
-                rball = max(rball_BAR,rball_FDM)
-                # print('rball before arc = ', rball)
-                rball = euclidean_distance(rball,shell_cov,param)
-                # print('rball after arc = ', rball,shell_cov)
-                #print('cvir = ',h['cvir'][j])
-                #print('rball/rvir = ', rball/h['rvir'][j])
-
-                # print('Mvir, rvir, rball = ', Mvir, rvir, rball)
-
-                #particle ids within rball
-                ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
-                # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
-                store_info.append([Mvir, rvir, rball, len(ipbool)])
-
-                if (len(ipbool) > 0):
-                    #calculating radii of FDM particles around halo j
-                    rpFDM  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
-                            (p_darkmatter['y'][ipbool]-hy)**2.0 +
-                            (p_darkmatter['z'][ipbool]-hz)**2.0)**0.5
-                    rpFDM = arcdistance(rpFDM,shell_cov,param)
-
-                    #calculating radii of BAR particles around halo j
-                    rpBAR = ((p_baryons['x'][ipbool]-hx)**2.0 +
-                            (p_baryons['y'][ipbool]-hy)**2.0 +
-                            (p_baryons['z'][ipbool]-hz)**2.0)**0.5
-                    rpBAR = arcdistance(rpBAR,shell_cov,param)
-
-                    if param.code.nbrhalo == 1:
-
-                        #ids of baryonic particles that are in neighbouring haloes 
-                        #ipbool_nbrhaloes = ipbool[np.where(rpBAR > rvir)]
-                        #ipbool_nbrhaloes = ipbool_nbrhaloes[np.where(iphalo[ipbool_nbrhaloes]>0)]
-                        #ipbool_wo_nbrhaloes = np.setdiff1d(ipbool,ipbool_nbrhaloes)
+                    #displacement functions
+                    DBAR = particle_displacer.displ(rbin, projected_MBAR_i, projected_MBAR_f)
+                    DFDM = particle_displacer.displ(rbin, projected_MDM_i, projected_MDM_f)
+                    # print(DBAR, DFDM)
+                    imf = impact_factor(h_cov, shell_cov, thickness, 4*rvir)
+                    DBAR *= imf
+                    DFDM *= imf
+                    # print(DBAR, DFDM,imf)   
+                    DBAR_tck = splrep(rbin, DBAR,s=0,k=3)
+                    DFDM_tck = splrep(rbin, DFDM,s=0,k=3)
                         
-                        mask_out = (rpBAR > rvir) & (iphalo[ipbool] > 0)    
-                        mask = mask_out | multi_halo[ipbool]
-                        ipbool_nbrhaloes    = ipbool[mask]
-                        ipbool_wo_nbrhaloes = ipbool[~mask]
+                    smallestD = param.code.disp_trunc #Mpc/h
+                    # print(DBAR, DFDM, smallestD)   
+                    #array of idx with DBAR > Dsmallest
+                    idx_BAR = np.where(abs(DBAR) > smallestD)
+                    idx_BAR = idx_BAR[:][0]
+                    if (len(idx_BAR)>1):
+                        idx_largest = idx_BAR[-1]
+                        rball_BAR = rbin[idx_largest]
+                    else:
+                        rball_BAR = 0.0
+
+                    #array of idx with DFDM > Dsmallest
+                    idx_FDM = np.where(abs(DFDM) > smallestD)
+                    idx_FDM = idx_FDM[:][0]
+                    if (len(idx_FDM)>1):
+                        idx_largest = idx_FDM[-1]
+                        rball_FDM = rbin[idx_largest]
+                    else:
+                        rball_FDM = 0.0
+
+                    #largest rball
+                    rball = max(rball_BAR,rball_FDM)
+                    # print('rball before arc = ', rball)
+                    rball = euclidean_distance(rball,shell_cov,param)
+                    # print('rball after arc = ', rball,shell_cov)
+                    #print('cvir = ',h['cvir'][j])
+                    #print('rball/rvir = ', rball/h['rvir'][j])
+
+                    # print('Mvir, rvir, rball = ', Mvir, rvir, rball)
+
+                    #particle ids within rball
+                    ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
+                    # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
+
+                    if (len(ipbool) > 0):
+                        #calculating radii of FDM particles around halo j
+                        rpFDM  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
+                                (p_darkmatter['y'][ipbool]-hy)**2.0 +
+                                (p_darkmatter['z'][ipbool]-hz)**2.0)**0.5
+                        rpFDM = arcdistance(rpFDM,shell_cov,param)
 
                         #calculating radii of BAR particles around halo j
-                        rpBAR_nbrhaloes = ((p_baryons['x'][ipbool_nbrhaloes]-hx)**2.0 +
-                                    (p_baryons['y'][ipbool_nbrhaloes]-hy)**2.0 +
-                                    (p_baryons['z'][ipbool_nbrhaloes]-hz)**2.0)**0.5
-                        rpBAR_nbrhaloes = arcdistance(rpBAR_nbrhaloes,shell_cov,param)
-                        rpBAR_wo_nbrhaloes = ((p_baryons['x'][ipbool_wo_nbrhaloes]-hx)**2.0 +
-                                    (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)**2.0 +
-                                    (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)**2.0)**0.5
-                        rpBAR_wo_nbrhaloes = arcdistance(rpBAR_wo_nbrhaloes,shell_cov,param)
+                        rpBAR = ((p_baryons['x'][ipbool]-hx)**2.0 +
+                                (p_baryons['y'][ipbool]-hy)**2.0 +
+                                (p_baryons['z'][ipbool]-hz)**2.0)**0.5
+                        rpBAR = arcdistance(rpBAR,shell_cov,param)
 
-                        DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                        DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                        DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                        DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+                        if param.code.nbrhalo == 1:
 
-                        if(len(rpBAR_nbrhaloes)>0):
-                            DrpBAR_nbrhaloes    = splev(rpBAR_nbrhaloes,DFDM_tck,der=0,ext=1)
-                            DrpBAR_wo_nbrhaloes = splev(rpBAR_wo_nbrhaloes,DBAR_tck,der=0,ext=1)
-                            DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-hx)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-hy)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-hz)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-hx)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                        else:
+                            #ids of baryonic particles that are in neighbouring haloes 
+                            #ipbool_nbrhaloes = ipbool[np.where(rpBAR > rvir)]
+                            #ipbool_nbrhaloes = ipbool_nbrhaloes[np.where(iphalo[ipbool_nbrhaloes]>0)]
+                            #ipbool_wo_nbrhaloes = np.setdiff1d(ipbool,ipbool_nbrhaloes)
+                            
+                            mask_out = (rpBAR > rvir) & (iphalo[ipbool] > 0)    
+                            mask = mask_out | multi_halo[ipbool]
+                            ipbool_nbrhaloes    = ipbool[mask]
+                            ipbool_wo_nbrhaloes = ipbool[~mask]
+
+                            #calculating radii of BAR particles around halo j
+                            rpBAR_nbrhaloes = ((p_baryons['x'][ipbool_nbrhaloes]-hx)**2.0 +
+                                        (p_baryons['y'][ipbool_nbrhaloes]-hy)**2.0 +
+                                        (p_baryons['z'][ipbool_nbrhaloes]-hz)**2.0)**0.5
+                            rpBAR_nbrhaloes = arcdistance(rpBAR_nbrhaloes,shell_cov,param)
+                            rpBAR_wo_nbrhaloes = ((p_baryons['x'][ipbool_wo_nbrhaloes]-hx)**2.0 +
+                                        (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)**2.0 +
+                                        (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)**2.0)**0.5
+                            rpBAR_wo_nbrhaloes = arcdistance(rpBAR_wo_nbrhaloes,shell_cov,param)
+
+                            DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
+                            DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
+                            DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
+                            DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+
+                            if(len(rpBAR_nbrhaloes)>0):
+                                DrpBAR_nbrhaloes    = splev(rpBAR_nbrhaloes,DFDM_tck,der=0,ext=1)
+                                DrpBAR_wo_nbrhaloes = splev(rpBAR_wo_nbrhaloes,DBAR_tck,der=0,ext=1)
+                                DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-hx)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                                DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-hy)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                                DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-hz)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
+                                DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-hx)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                                DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                                DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                            else:
+                                DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
+                                DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
+                                DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
+                                DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
+                                
+                        elif param.code.nbrhalo == 0:
+                            
                             DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
                             DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
                             DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
                             DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
+
+                            DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
+                            DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
+                            DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
+                            DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+
+                        #separate baryons into gas and stars                  
+                        #probabilities
+                        proj_HGA = projection(frac['HGA']*(dens['HGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
+                        proj_IGA = projection(frac['IGA']*(dens['IGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
+                        proj_CGA = projection(frac['CGA']*(dens['CGA']), rbin, rvir, thickness, param, output='density', star=True)
+                        proj_SGA = projection(frac['SGA']*(dens['SGA']), rbin, rvir, thickness, param, output='density', star=True)
                             
-                    elif param.code.nbrhalo == 0:
-                        
-                        DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
-                        DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
-                        DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
-                        DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
+                        probHGA = np.round(proj_HGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                        probIGA = np.round(proj_IGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                        probCGA = np.round(proj_CGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                        probSGA = np.round(proj_SGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
 
-                        DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                        DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                        DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                        DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+                        #Only HGA outside of virial radius
+                        probHGA[np.where(rbin>=h['rvir'][j])] = 1.0
+                        probIGA[np.where(rbin>=h['rvir'][j])] = 0.0
+                        probCGA[np.where(rbin>=h['rvir'][j])] = 0.0
+                        probSGA[np.where(rbin>=h['rvir'][j])] = 0.0
 
-                    #separate baryons into gas and stars                  
-                    #probabilities
-                    proj_HGA = projection(frac['HGA']*(dens['HGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
-                    proj_IGA = projection(frac['IGA']*(dens['IGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
-                    proj_CGA = projection(frac['CGA']*(dens['CGA']), rbin, rvir, thickness, param, output='density', star=True)
-                    proj_SGA = projection(frac['SGA']*(dens['SGA']), rbin, rvir, thickness, param, output='density', star=True)
-                        
-                    probHGA = np.round(proj_HGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probIGA = np.round(proj_IGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probCGA = np.round(proj_CGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probSGA = np.round(proj_SGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-
-                    #Only HGA outside of virial radius
-                    probHGA[np.where(rbin>=h['rvir'][j])] = 1.0
-                    probIGA[np.where(rbin>=h['rvir'][j])] = 0.0
-                    probCGA[np.where(rbin>=h['rvir'][j])] = 0.0
-                    probSGA[np.where(rbin>=h['rvir'][j])] = 0.0
-
-                    probHGA_tck = splrep(rbin, probHGA, s=0, k=1)
-                    probIGA_tck = splrep(rbin, probIGA, s=0, k=1)
-                    probCGA_tck = splrep(rbin, probCGA, s=0, k=1)
-                    probSGA_tck = splrep(rbin, probSGA, s=0, k=1)
+                        probHGA_tck = splrep(rbin, probHGA, s=0, k=1)
+                        probIGA_tck = splrep(rbin, probIGA, s=0, k=1)
+                        probCGA_tck = splrep(rbin, probCGA, s=0, k=1)
+                        probSGA_tck = splrep(rbin, probSGA, s=0, k=1)
 
 
-                    #calculate the probabilities per particle
-                    if param.code.nbrhalo == 1:
-                        if(len(rpBAR_nbrhaloes)>0):
-                            rpBAR_wo_nbrhaloes_displ = rpBAR_wo_nbrhaloes + DrpBAR_wo_nbrhaloes
-                            pHGA = splev(rpBAR_wo_nbrhaloes_displ, probHGA_tck,der=0,ext=3)
-                            pIGA = splev(rpBAR_wo_nbrhaloes_displ, probIGA_tck,der=0,ext=3)
-                            pCGA = splev(rpBAR_wo_nbrhaloes_displ, probCGA_tck,der=0,ext=3)
-                            pSGA = splev(rpBAR_wo_nbrhaloes_displ, probSGA_tck,der=0,ext=3)
-                        else:
+                        #calculate the probabilities per particle
+                        if param.code.nbrhalo == 1:
+                            if(len(rpBAR_nbrhaloes)>0):
+                                rpBAR_wo_nbrhaloes_displ = rpBAR_wo_nbrhaloes + DrpBAR_wo_nbrhaloes
+                                pHGA = splev(rpBAR_wo_nbrhaloes_displ, probHGA_tck,der=0,ext=3)
+                                pIGA = splev(rpBAR_wo_nbrhaloes_displ, probIGA_tck,der=0,ext=3)
+                                pCGA = splev(rpBAR_wo_nbrhaloes_displ, probCGA_tck,der=0,ext=3)
+                                pSGA = splev(rpBAR_wo_nbrhaloes_displ, probSGA_tck,der=0,ext=3)
+                            else:
+                                rpBAR_displ = rpBAR + DrpBAR
+                                pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
+                                pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
+                                pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
+                                pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
+                                
+                        elif param.code.nbrhalo == 0:
                             rpBAR_displ = rpBAR + DrpBAR
                             pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
                             pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
                             pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
                             pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
-                            
-                    elif param.code.nbrhalo == 0:
-                        rpBAR_displ = rpBAR + DrpBAR
-                        pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
-                        pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
-                        pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
-                        pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
 
-                    #we record how likely particles in this healpix is a star with a float id
-                    #id=0.0 for full gas, id=1.0 for full star
-                    prob_star = pCGA + pSGA
-                    if param.code.nbrhalo==1:
-                        if (len(rpBAR_nbrhaloes) > 0):
-                            DpBAR['id'][ipbool_wo_nbrhaloes] = prob_star
-                        else:
+                        #we record how likely particles in this healpix is a star with a float id
+                        #id=0.0 for full gas, id=1.0 for full star
+                        prob_star = pCGA + pSGA
+                        if param.code.nbrhalo==1:
+                            if (len(rpBAR_nbrhaloes) > 0):
+                                DpBAR['id'][ipbool_wo_nbrhaloes] = prob_star
+                            else:
+                                DpBAR['id'][ipbool] += prob_star
+                                DpBAR['id'][ipbool] = np.clip(DpBAR['id'][ipbool], a_min=0.0, a_max=1.0)
+                        elif param.code.nbrhalo == 0:
                             DpBAR['id'][ipbool] += prob_star
                             DpBAR['id'][ipbool] = np.clip(DpBAR['id'][ipbool], a_min=0.0, a_max=1.0)
-                    elif param.code.nbrhalo == 0:
-                        DpBAR['id'][ipbool] += prob_star
-                        DpBAR['id'][ipbool] = np.clip(DpBAR['id'][ipbool], a_min=0.0, a_max=1.0)
+            
+            filenameDpBAR = f'./tmp/DpBAR_shell_{shell_id}_cpu_{i_cpu}.npy'
+            filenameDrpFDM = f'./tmp/DrpFDM_shell_{shell_id}_cpu_{i_cpu}.npy'
+            np.save(filenameDpBAR, DpBAR)
+            np.save(filenameDrpFDM, DpFDM)
+            
+            return_dict_DpBAR.append(filenameDpBAR)
+            return_dict_DpFDM.append(filenameDrpFDM)
+            
+            del rpFDM, rpBAR, DrpFDM, DrpBAR
+            return 0
 
-        # store the output
-        np.savetxt(f'shell_{shell_id}_info.txt', np.array(store_info))                       
+        def sum_structured_arrays_from_files(filenames):
+            """
+            Sum 'x', 'y', 'z', 'id' fields from a list of .npy structured arrays,
+            opening one file at a time to minimize open file count and memory use.
+            """
+            if not filenames:
+                raise ValueError("Empty file list")
+
+            # Initialize accumulator with zeros like the first file
+            first = np.load(filenames[0])
+            out = np.zeros_like(first)
+            out["x"] += first["x"]
+            out["y"] += first["y"]
+            out["z"] += first["z"]
+            out["id"] += first["id"]
+            del first
+
+            # Loop through remaining files one by one
+            for fn in tqdm(filenames[1:]):
+                arr = np.load(fn)
+                out["x"] += arr["x"]
+                out["y"] += arr["y"]
+                out["z"] += arr["z"]
+                out["id"] += arr["id"]
+                del arr
+
+            return out
+
+        """
+        parallelization
+        """
+        with multiprocessing.Manager() as manager:
+        # manager = multiprocessing.Manager()
+            return_dict_DpBAR = manager.list()
+            return_dict_DpFDM = manager.list()
+            
+            gl_start = time()
+            nproc = np.min([multiprocessing.cpu_count(),128,len(h['Mvir'])])
+            print('number of processes:',nproc)
+            idx = np.arange(len(h['Mvir']))
+            procs = []
+            for p in range(nproc):
+                globals()['p'+str(p)] = multiprocessing.Process(target=loop_cpus, args=(p, idx[p::nproc],return_dict_DpBAR,return_dict_DpFDM))
+                print('starting process ',p,eval('p'+str(p)))
+                eval('p'+str(p)).start()
+                procs.append(eval('p'+str(p)))
+
+            for p in range(nproc):
+                print('joining process:',p)
+                eval('p'+str(p)).join()
+                print(eval('p'+str(p)))
+
+            gl_end = time()
+            print('Global time for current shell:', gl_end - gl_start, 'concatenating outputs')
+            print(return_dict_DpBAR,return_dict_DpFDM)
+            
+            print('Loading displacements from all processes')
+            print("summing displacements...")
+            DpBAR = sum_structured_arrays_from_files(return_dict_DpBAR)
+            DpFDM = sum_structured_arrays_from_files(return_dict_DpFDM)
+
+            
+        gc.collect()
+
+        t = time()
         #Displace particles and separarte BAR into HGA, CGA, SGA
         DpBAR_c = arcdisplace(np.column_stack((DpBAR['x'], DpBAR['y'], DpBAR['z'])),
                             np.column_stack((p_baryons['x'], p_baryons['y'], p_baryons['z'])),shell_cov,param)
@@ -1084,11 +1174,11 @@ class ShellDisplacer:
         p_darkmatter['y'] += DpFDM_c[:,1]
         p_darkmatter['z'] += DpFDM_c[:,2]
         del DpFDM_c, DpBAR_c
-        del rpFDM, rpBAR, DrpFDM, DrpBAR
-
+        print(f"Time to displace particles: {time()-t} seconds")
+        t = time()
         #convert position to healpix index and store the data
         shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'])
         shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None)
         shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'])
-        
+        print(f"Time to convert to healpix map: {time()-t} seconds")
         return shell_id, shell_gas, shell_dm, shell_star

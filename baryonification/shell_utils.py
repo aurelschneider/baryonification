@@ -1,8 +1,13 @@
+import os
 import healpy as hp
 import numpy as np
+from time import time
+from tqdm import tqdm
+import multiprocessing
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import splrep, splev
 from collections import defaultdict
+import gc
 
 from .params import *
 
@@ -150,6 +155,7 @@ def get_particles_uv(nside, pixels, shell_r, halos):
     h = halos[halos['IDhost']==-1]
     
     # Process each halo to mark its pixel and neighbors
+    t = time()
     for i in range(len(h)):
         x, y, z = h['x'][i], h['y'][i], h['z'][i]
         norm = np.sqrt(x*x + y*y + z*z)
@@ -164,7 +170,8 @@ def get_particles_uv(nside, pixels, shell_r, halos):
     
     halo_map = np.array([pix in halo_pixels_dict for pix in range(npix)])
     neighbor_map &= ~halo_map  # Exclude halo pixels from neighbors
-    
+    print(f"Processed halos and neighbors in {time() - t:.2f} seconds.")
+    t = time()
     # Precompute adjacent halos for neighbor pixels
     adjacent_halos_dict = defaultdict(list)
     for pix in np.where(neighbor_map)[0]:
@@ -175,6 +182,8 @@ def get_particles_uv(nside, pixels, shell_r, halos):
     
     # Process particle pixels
     particle_pixels = np.where(pixels > 0)[0]
+    print(f"Prepared adjacent halos in {time() - t:.2f} seconds.")
+    t = time()
     p_list = []
 
     def assign_weight(dists, h):
@@ -194,57 +203,178 @@ def get_particles_uv(nside, pixels, shell_r, halos):
 
         return weight
     
-    for pix in particle_pixels:
-        pix_mass = pixels[pix]
+    # for pix in tqdm(particle_pixels):
+    #     pix_mass = pixels[pix]
         
-        if halo_map[pix]:
-            # Case A: Halo pixel
-            halos_in_pixel = halo_pixels_dict.get(pix, [])
-            sub_nside = 4 * nside
-            idx_n = hp.ring2nest(nside, pix)
-            grandchildren = hp.nest2ring(sub_nside, idx_n * 16 + np.arange(16))
-            dirs = np.array(hp.pix2vec(sub_nside, grandchildren, nest=False)).T
-            sub_positions = dirs * shell_r
+    #     if halo_map[pix]:
+    #         # Case A: Halo pixel
+    #         halos_in_pixel = halo_pixels_dict.get(pix, [])
+    #         sub_nside = 4 * nside
+    #         idx_n = hp.ring2nest(nside, pix)
+    #         grandchildren = hp.nest2ring(sub_nside, idx_n * 16 + np.arange(16))
+    #         dirs = np.array(hp.pix2vec(sub_nside, grandchildren, nest=False)).T
+    #         sub_positions = dirs * shell_r
             
-            mass_weights = np.ones(16)
-            if halos_in_pixel:
-                for halo_idx in halos_in_pixel:
-                    halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
-                    dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
-                    mass_weights += assign_weight(dists,h[halo_idx])
-                mass_weights /= np.sum(mass_weights)
+    #         mass_weights = np.ones(16)
+    #         if halos_in_pixel:
+    #             for halo_idx in halos_in_pixel:
+    #                 halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
+    #                 dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
+    #                 mass_weights += assign_weight(dists,h[halo_idx])
+    #             mass_weights /= np.sum(mass_weights)
             
-            for j in range(16):
-                mass = pix_mass * mass_weights[j]
-                p_list.append((sub_positions[j], mass, 2))
+    #         for j in range(16):
+    #             mass = pix_mass * mass_weights[j]
+    #             p_list.append((sub_positions[j], mass, 2))
                 
-        elif neighbor_map[pix]:
-            # Case B: Neighbor pixel 
-            adjacent_halos = adjacent_halos_dict.get(pix, [])
-            sub_nside = 2 * nside
-            idx_n = hp.ring2nest(nside, pix)
-            children = hp.nest2ring(sub_nside, idx_n * 4 + np.arange(4))
-            dirs = np.array(hp.pix2vec(sub_nside, children, nest=False)).T
-            sub_positions = dirs * shell_r
+    #     elif neighbor_map[pix]:
+    #         # Case B: Neighbor pixel 
+    #         adjacent_halos = adjacent_halos_dict.get(pix, [])
+    #         sub_nside = 2 * nside
+    #         idx_n = hp.ring2nest(nside, pix)
+    #         children = hp.nest2ring(sub_nside, idx_n * 4 + np.arange(4))
+    #         dirs = np.array(hp.pix2vec(sub_nside, children, nest=False)).T
+    #         sub_positions = dirs * shell_r
             
-            mass_weights = np.ones(4)
-            if adjacent_halos:
-                for halo_idx in adjacent_halos:
-                    halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
-                    dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
-                    mass_weights += assign_weight(dists,h[halo_idx])
-                mass_weights /= np.sum(mass_weights)
+    #         mass_weights = np.ones(4)
+    #         if adjacent_halos:
+    #             for halo_idx in adjacent_halos:
+    #                 halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
+    #                 dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
+    #                 mass_weights += assign_weight(dists,h[halo_idx])
+    #             mass_weights /= np.sum(mass_weights)
             
-            for j in range(4):
-                mass = pix_mass * mass_weights[j]
-                p_list.append((sub_positions[j], mass, 1))
+    #         for j in range(4):
+    #             mass = pix_mass * mass_weights[j]
+    #             p_list.append((sub_positions[j], mass, 1))
                 
-        else:
-            # Case C: Regular pixel
-            dirs = np.array(hp.pix2vec(nside, pix, nest=False))
-            pos = dirs * shell_r
-            p_list.append((pos, pix_mass, 0))
+    #     else:
+    #         # Case C: Regular pixel
+    #         dirs = np.array(hp.pix2vec(nside, pix, nest=False))
+    #         pos = dirs * shell_r
+    #         p_list.append((pos, pix_mass, 0))
+    # print(f"Processed particle pixels in {time() - t:.2f} seconds.") 
+
+    def loop_cpus(pid, pix_subset, return_dict):
+        from time import time
+        import healpy as hp
+        import numpy as np
+        
+        t0 = time()
+        local_list = []
+        
+        for pix in tqdm(pix_subset):
+            pix_mass = pixels[pix]
             
+            if halo_map[pix]:
+                halos_in_pixel = halo_pixels_dict.get(pix, [])
+                sub_nside = 4 * nside
+                idx_n = hp.ring2nest(nside, pix)
+                grandchildren = hp.nest2ring(sub_nside, idx_n * 16 + np.arange(16))
+                dirs = np.array(hp.pix2vec(sub_nside, grandchildren, nest=False)).T
+                sub_positions = dirs * shell_r
+                
+                mass_weights = np.ones(16)
+                if halos_in_pixel:
+                    for halo_idx in halos_in_pixel:
+                        halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
+                        dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
+                        mass_weights += assign_weight(dists, h[halo_idx])
+                    mass_weights /= np.sum(mass_weights)
+                
+                for j in range(16):
+                    mass = pix_mass * mass_weights[j]
+                    local_list.append((pix, sub_positions[j], mass, 2))
+                    
+            elif neighbor_map[pix]:
+                adjacent_halos = adjacent_halos_dict.get(pix, [])
+                sub_nside = 2 * nside
+                idx_n = hp.ring2nest(nside, pix)
+                children = hp.nest2ring(sub_nside, idx_n * 4 + np.arange(4))
+                dirs = np.array(hp.pix2vec(sub_nside, children, nest=False)).T
+                sub_positions = dirs * shell_r
+                
+                mass_weights = np.ones(4)
+                if adjacent_halos:
+                    for halo_idx in adjacent_halos:
+                        halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
+                        dists = np.linalg.norm(sub_positions - halo_pos, axis=1)
+                        mass_weights += assign_weight(dists, h[halo_idx])
+                    mass_weights /= np.sum(mass_weights)
+                
+                for j in range(4):
+                    mass = pix_mass * mass_weights[j]
+                    local_list.append((pix, sub_positions[j], mass, 1))
+                    
+            else:
+                dirs = np.array(hp.pix2vec(nside, pix, nest=False))
+                pos = dirs * shell_r
+                local_list.append((pix, pos, pix_mass, 0))
+
+        # return_dict[pid] = local_list
+        output_dir = './tmp'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        filename = os.path.join(output_dir, f"particles_local_{pid}.npy")
+        # np.save(filename, np.array(local_list, dtype=object))
+        arr = np.zeros(len(local_list), dtype=[('pix', 'i4'), ('pos', '3f4'), ('mass', 'f4'), ('tag', 'i4')])
+        for i, (pix, pos, mass, tag) in enumerate(local_list):
+            arr[i]['pix'] = pix
+            arr[i]['pos'] = pos
+            arr[i]['mass'] = mass
+            arr[i]['tag'] = tag
+        np.save(filename, arr)
+
+        del local_list
+        del arr
+        gc.collect()
+
+        # Only store metadata (small!)
+        return_dict[pid] = filename
+        print(f"Process {pid} finished {len(pix_subset)} pixels in {time()-t0:.2f}s.")
+        return 0
+
+
+    manager = multiprocessing.Manager()
+    return_dict = manager.dict()
+    procs = []
+
+    # nproc = np.min([multiprocessing.cpu_count(),64])
+    nproc = np.min([multiprocessing.cpu_count(),128])
+    idx = np.arange(len(particle_pixels))
+
+    t_global = time()
+
+    for p in range(nproc):
+        pix_subset = particle_pixels[p::nproc]#[particle_pixels[i] for i in idx[p::nproc]]
+        globals()[f"p{p}"] = multiprocessing.Process(
+            target=loop_cpus, args=(p, pix_subset, return_dict)
+        )
+        print(f"starting process {p}")
+        globals()[f"p{p}"].start()
+        procs.append(globals()[f"p{p}"])
+
+    for p in range(nproc):
+        print(f"joining process {p}")
+        globals()[f"p{p}"].join()
+
+    print(f"All processes finished in {time()-t_global:.2f}s")
+    t = time()
+    # all_data = [np.load(return_dict[p], allow_pickle=True) for p in return_dict.keys()]
+    all_data = [np.load(return_dict[p], mmap_mode='r') for p in sorted(return_dict.keys())]
+    p_all = np.concatenate(all_data)
+    # p_all = np.sort(p_all, order='pix')
+    keep_fields = ['pos', 'mass', 'tag']
+    p_all_filtered = p_all[keep_fields]
+    # perm = np.loadtxt('/cluster/work/refregier/jbucko/shell_baryonification/notebooks/perm.txt')
+    # p_all = p_all[perm]
+    tt = time()
+    print('intermediate print', tt-t)
+    p_list = p_all_filtered
+
+
+    print(f"Final particle list has {len(p_list)} entries, should be {len(particle_pixels)}")
+    # np.save('./tmp/particle_uv_final.npy', p_list)
     return p_list
 
 def get_child_pixels(parent_nside, pix, child_nside):
@@ -302,10 +432,13 @@ def particle_worker(task):
     elif mesh_ref == 3:
         sub = get_particles_uv(nside, pixels, shell_cov, h)
         p = np.zeros(len(sub), dtype=p_dt)
-        for j, (pos, mm, order) in enumerate(sub):
-            p[j]['x'], p[j]['y'], p[j]['z'] = pos
-            p[j]['M'] = mm
-            p[j]['ref_order'] = order
+        # for j, (pos, mm, order) in enumerate(sub):
+        #     p[j]['x'], p[j]['y'], p[j]['z'] = pos
+        #     p[j]['M'] = mm
+        #     p[j]['ref_order'] = order
+        p[:]['x'], p[:]['y'], p[:]['z'] = sub['pos'][:,0], sub['pos'][:,1], sub['pos'][:,2]
+        p[:]['M'] = sub['mass']
+        p[:]['ref_order'] = sub['tag']
     else:
         raise ValueError(f"Unsupported mesh_ref: {mesh_ref}")
     return i, p

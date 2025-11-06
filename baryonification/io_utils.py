@@ -476,7 +476,7 @@ class IO_shell:
         assert n_side == self.param.code.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.code.nside}"
         return shell_id, map_list
 
-    def read_halo_lc_file(self):
+    def read_halo_lc_file(self,output_shell_info = False):
         """
         Read in halo lightcone
         """
@@ -532,7 +532,7 @@ class IO_shell:
             #halo data
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
-            halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
+            # halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
             
             for i in shell_id:
                 self.param.cosmo.z = redshift[i]
@@ -557,9 +557,10 @@ class IO_shell:
                 h = np.zeros(len(select_halo['x']),dtype=h_dt)
                 h['ID'] = select_IDs
                 # host halo status needs to be obtained from the old cosmogrid file
-                select_halos_old = halos_cosmogrid_old['halos'][halos_cosmogrid_old['halos']['shell_id'] == i]
+                # select_halos_old = halos_cosmogrid_old['halos'][halos_cosmogrid_old['halos']['shell_id'] == i]
 
-                h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
+                # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
+                h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
                 # print('IDhosts:', h['IDhost'])
                 # we project the halo coordinates
                 norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
@@ -577,12 +578,14 @@ class IO_shell:
                 halo_shell[i] = h
             print("Read halo file done!")
             lchalo_file.close()
-            del h, halos_cosmogrid_old
+            del h#, halos_cosmogrid_old
         else:
             print("Other halo file formats not supported")
         h_list = [halo_shell[i] for i in shell_id]
         thickness_list = [thickness[i] for i in shell_id]
         redshift_list = [redshift[i] for i in shell_id]
+        if output_shell_info == True:
+            return h_list, thickness_list, redshift_list, shell_info    
         return h_list, thickness_list, redshift_list
 
     def write_shell_file(self,gas_shell,dm_shell,star_shell):
