@@ -532,7 +532,7 @@ class IO_shell:
             #halo data
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
-            halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
+            halos_cosmogrid_old = np.load("/lustre/scratch/data/s27mkova_hpc-cosmogrid/run_0000/Halofile_MinParts=100.npz")
             
             for i in shell_id:
                 self.param.cosmo.z = redshift[i]
