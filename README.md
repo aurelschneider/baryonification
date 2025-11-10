@@ -15,18 +15,39 @@ To download and install the package, type
 
 The script below provides a minimal example to use the code:
 ```python
+from __future__ import annotations
+import os, sys, math, pathlib, requests, subprocess
+from typing import Optional
 import baryonification as bfc
+
+# ----------------------------------------------------------------------
+# CONFIGURATION
+# ----------------------------------------------------------------------
+RECORD_ID = "17525781"  # your Zenodo_ID for required files
+CACHE_DIR = pathlib.Path(RECORD_ID).resolve()
+
+BOX_FILE  = CACHE_DIR / "results.00100"                   # simulation name on Zenodo (DO NOT CHANGE)
+HALO_FILE = CACHE_DIR / "AHF_halos.00100.0000.z0.000.AHF_halos"      # Halofile name on Zenodo (DO NOT CHANGE)
+
+# ----------------------------------------------------------------------
+# 1. Ensure data exist (run zenodo_dl.py if missing)
+# ----------------------------------------------------------------------
+if not BOX_FILE.exists() or not HALO_FILE.exists():
+    print("\n🔹 Required data not found locally. Downloading from Zenodo...\n")
+    subprocess.run(["python", "zenodo_dl.py", RECORD_ID], check=True)
+else:
+    print("✅ All required data already downloaded.\n")
 
 #initialise parameters                                                                                                                                                                                                                                                                     
 par = bfc.par()
 
 #set paths to input-files
-par.files.transfct     = "path_to_transfer_function/CDM_PLANCK_tk.dat"
-par.files.partfile_in  = "path_to_nbody_file/CDM_L128_N256.00100
-par.files.halofile_in  = "path_to_halo_file/CDM_L128_N256.00100.z0.000_halos
+par.files.transfct     = './baryonification/baryonification/files/CDM_PLANCK_tk.dat'
+par.files.partfile_in  = str(BOX_FILE)
+par.files.halofile_in  = str(HALO_FILE)
 
 #set path to output-file
-par.files.partfile_out = "path_to_output_file/BFC-CDM_L128_N256.00100
+par.files.partfile_out = "BFC_CDM_L128_N256.00100"
 
 #modify model parameters (all default values listed in baryonification/params.py)
 par.baryon.Mc    = 1e13
@@ -35,10 +56,10 @@ par.baryon.delta = 5.0
 
 #set simulation box and redshift
 par.sim.Lbox = 128
-par.cosmo.redshift = 0.0
+par.cosmo.z = 0.0
 
 #Set number of chunks for paralleisation (N_chunk=i means 2^i chunks)
-par.sim.N_chunk = 2
+par.sim.N_chunk = 1
 
 #baryonify
 part_displ = bfc.ParticleDisplacer(par)
