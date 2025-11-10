@@ -28,13 +28,14 @@ CACHE_DIR = pathlib.Path(RECORD_ID).resolve()
 
 BOX_FILE  = CACHE_DIR / "results.00100"                   # simulation name on Zenodo (DO NOT CHANGE)
 HALO_FILE = CACHE_DIR / "AHF_halos.00100.0000.z0.000.AHF_halos"      # Halofile name on Zenodo (DO NOT CHANGE)
+PATH = 'path to zenodo_dl.py file'
 
 # ----------------------------------------------------------------------
 # 1. Ensure data exist (run zenodo_dl.py if missing)
 # ----------------------------------------------------------------------
 if not BOX_FILE.exists() or not HALO_FILE.exists():
     print("\n🔹 Required data not found locally. Downloading from Zenodo...\n")
-    subprocess.run(["python", "zenodo_dl.py", RECORD_ID], check=True)
+    subprocess.run(["python", PATH+"zenodo_dl.py", RECORD_ID], check=True)
 else:
     print("✅ All required data already downloaded.\n")
 
