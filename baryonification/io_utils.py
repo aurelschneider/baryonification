@@ -46,7 +46,7 @@ class IO_nbody:
                 print('IOERROR: N-body tipsy file does not exist!')
                 print('Define par.files.partfile_in = "/path/to/file"')
                 exit()
-            p_header_dt = np.dtype([('a','>d'),('Npart','>i'),('dim','>i'),('Ngas','>i'),('Ndm','>i'),('Nstar','>i'),('buffer','>i')])
+            p_header_dt = np.dtype([('a','>d'),('Npart','>u4'),('dim','>u4'),('Ngas','>u4'),('Ndm','>u4'),('Nstar','>u4'),('buffer','>u4')])
             p_header = np.fromfile(f, dtype=p_header_dt, count=1, sep='')
             p_dt = np.dtype([('mass','>f'),("x",'>f'),("y",'>f'),("z",'>f'),("vx",'>f'),("vy",'>f'),("vz",'>f'),("eps",'>f'),("phi",'>f')])
             p_dm = np.fromfile(f, dtype=p_dt, count=int(p_header['Npart']), sep='')
@@ -68,7 +68,7 @@ class IO_nbody:
             print(header)
             mass = (header['Omega0']/len(dm_pos[:,0])).astype(np.float32)
             dm_mass = np.full(len(dm_pos[:,0]),mass)
-            p_header_dt = np.dtype([('a','>d'),('Npart','>i'),('dim','>i'),('Ngas','>i'),('Ndm','>i'),('Nstar','>i'),('buffer','>i')])
+            p_header_dt = np.dtype([('a','>d'),('Npart','>u4'),('dim','>u4'),('Ngas','>u4'),('Ndm','>u4'),('Nstar','>u4'),('buffer','>u4')])
             p_header = np.zeros(1,dtype=p_header_dt)
             p_header['Npart'] = len(dm_pos[:,0])
             p_header['Ndm'] = len(dm_pos[:,0])
@@ -248,15 +248,15 @@ class IO_halo:
 
         elif (halo_file_format=='ROCKSTAR-NPY'):
             try:
-                names = "ID,IDhost,Mvir,x,y,z,rvir"
-                h = np.genfromtxt(halo_file_in,usecols=(0,1,17,2,3,4,18),comments='#',dtype=None,names=names)
+                names = "ID,IDhost,Mvir,x,y,z,rvir,rs"
+                h = np.genfromtxt(halo_file_in,usecols=(0,1,2,8,9,10,5,6),comments='#',dtype=None,names=names)
             except IOError:
                 print('IOERROR: AHF-ASCII file does not exist!')
                 print('Define par.files.halofile_in = "/path/to/file"')
                 exit()
-            h = append_fields(h, 'cvir', h['rvir']/h['rs_hlist'])
+            h = append_fields(h, 'cvir', h['rvir']/h['rs'])
             h['rvir'] = h['rvir']/1000
-            h['rs_hlist'] = h['rs_hlist']/1000
+            h['rs'] = h['rs']/1000
             gID  = np.where(np.isfinite(h['cvir']))
             h = h[gID]
             h = h[h['Mvir']>param.code.Mhalo_min]
