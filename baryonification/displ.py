@@ -813,9 +813,9 @@ class ShellDisplacer:
         for i_proc in range(num_processes):
             t1 = time()
             print(f"Sampling particles for shell {i_proc+1}/{num_processes}")
-            filename_pixleparticle = f"{output_dir}/pixelparticle_{self.param.files.shellfile_in.replace('/','_')}_shell_{self.param.code.min_shell+i_proc}.pkl"
+            filename_pixleparticle = f"{output_dir}/pixelparticle_{self.param.files.shellfile_in.replace('/','_')}_shell_{self.param.shell.min_shell+i_proc}.pkl"
             if os.path.exists(filename_pixleparticle):
-                print(f"Found existing pixelparticle shell {self.param.code.min_shell+i_proc}, loading file {filename_pixleparticle}")
+                print(f"Found existing pixelparticle shell {self.param.shell.min_shell+i_proc}, loading file {filename_pixleparticle}")
                 with open(filename_pixleparticle, "rb") as pkl_file:
                     result = pkl.load(pkl_file)
             else:
