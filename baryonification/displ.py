@@ -53,11 +53,19 @@ class ParticleDisplacer:
             p_header['Ngas'] = p_header['Npart']
             p_header['Npart'] = int(2 * p_header['Npart'])
 
-        displ_p = self.displace_chunk(p_header, p_list[0], h_list[0])
-        p_gas_displ = [displ_p[0]]
-        p_dm_displ = [displ_p[1]]
-        p_star_displ = [displ_p[2]]
-
+        if N_cpu == 1:
+            displ_p = self.displace_chunk(p_header, p_list[0], h_list[0])
+            p_gas_displ = [displ_p[0]]
+            p_dm_displ = [displ_p[1]]
+            p_star_displ = [displ_p[2]]
+        elif N_cpu > 1:
+            pool = schwimmbad.choose_pool(mpi=False, processes=N_cpu)
+            tasks = list(zip(p_list, h_list, np.repeat(p_header, N_cpu)))
+            displ_p = np.array(pool.map(self.worker, tasks))
+            p_gas_displ = displ_p[:, 0]
+            p_dm_displ = displ_p[:, 1]
+            p_star_displ = displ_p[:, 2]
+            pool.close()
         
         #combine chunks
         p_gas = np.concatenate(p_gas_displ)
