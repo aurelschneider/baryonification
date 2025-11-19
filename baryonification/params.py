@@ -78,11 +78,13 @@ def io_files():
         "TNGnumber": 99,   #number of TNG files
 
         # added for shell baryonification
-        "halolc_format": 'CosmoGrid_nersc',  # format of the input halo lightcone
-        "halolc_in": 'halolc_in.std',
-        "shellfile_format": 'CosmoGrid_nersc',       # format of the input lightcone shell
-        "shellfile_in": 'shellfile_in.std',
-        "shellfile_out": 'shellfile_out.std',
+        "halolc_format": 'CosmoGrid_nersc',      # format of the input halo lightcone
+        "halolc_in": 'halolc_in.h5',             # input halo lightcone file
+        "shellfile_format": 'CosmoGrid_nersc',   # format of the input lightcone shell
+        "shellfile_in": 'shell_in.npz',          # input lightcone shell file
+        "shellfile_out": 'shell_out.h5',         # output lightcone shell file
+        "output_pixelparticle_file": True,       # output file for pixel particles
+        "tmp_files": './tmp',                    # directory to store temporary files (they can be large!)
     }
     return Bunch(par)
 
@@ -100,48 +102,56 @@ def code_par():
         "rmin": 0.005,
         "rmax": 50.0,
         "Nrbin": 100,
-        "rbuffer": 10.0,        # buffer size to take care of boundary conditions
-        "eps0": 4.0,            # truncation factor: eps=rtr/rvir with eps = eps0 - eps1*nu
-        "eps1": 0.5,            # eps1=0 corresponds to the old case
-        "beta_model": 1,        # 0: old model from Schneider+18 1: new model
-        "AC_model": 5,          # 0: Abadi2010, 1: Velmani&Paranjape2023, 2:stepfct followed by AC, 5: empirical model (default)
-        "q0": 0.075,            # Adiabatic contraction model param Q0 = q0*(1+z)*q0_exp
-        "q0_exp": 0.0,          # Exponent of adiabatic contraction param Q0
+        "rbuffer": 10.0,         # Buffer size to take care of boundary conditions
+        "eps0": 4.0,             # Truncation factor: eps=rtr/rvir with eps = eps0 - eps1*nu
+        "eps1": 0.5,             # eps1=0 corresponds to the old case
+        "beta_model": 1,         # 0: old model from Schneider+18 1: new model
+        "AC_model": 5,           # 0: Abadi2010, 1: Velmani&Paranjape2023, 2:stepfct followed by AC, 5: empirical model (default)
+        "q0": 0.075,             # Adiabatic contraction model param Q0 = q0*(1+z)*q0_exp
+        "q0_exp": 0.0,           # Exponent of adiabatic contraction param Q0
         "q1": 0.25,              # Adiabatic contraction model param Q1 = q1*(1+z)*q1_exp
-        "q1_exp": 0.0,          # Exponent of adiabatic contraction param Q1
+        "q1_exp": 0.0,           # Exponent of adiabatic contraction param Q1
         "q2": 0.8,              
         "q2_exp": 0.0,
-        "Mhalo_min": 2.5e11,    # Minimum halo mass [Msun/h]
-        "disp_trunc": 0.01,     # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
-        "halo_excl": 0.4,        # halo exclusion parameter (no exclusion = large number e.g. 1000)
+        "Mhalo_min": 2.5e11,     # Minimum halo mass [Msun/h]
+        "disp_trunc": 0.01,      # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
+        "halo_excl": 0.4,        # Halo exclusion parameter (no exclusion = large number e.g. 1000)
 
         # added for shell baryonification
-        "nbrhalo": 0,           #0: no neighboring halo treatment
-                                #1: displace gas in neighboring halo using dm displacement function
-        "max_shell": 1,         # largest shell id to be displaced
-        "min_shell": 0,         # smallest shell id to be displaced
-        "nside": 2048,          # resolution of the input shell
-        "nside_out": 512,       # resolution of the output shell
-        "mesh_ref": 3,          #0: no mesh refinement
-                                #1: apply mesh refinement for large mass pixels
-                                #2: apply mesh refinement near halo centers
-                                #3: apply mesh refinement near halo centers, weighted using projected NFW profile
-        "interp": True,         #Apply linear interpolation when collecting displaced particles back to map
-        "mass_threshold": 80,     #Mass threshold for performing mesh refinement 1
-        "mass_threshold_2":150,   #Mass threshold for performing mesh refinement 1
-        "mass_threshold_3":None, #Mass threshold for performing mesh refinement 1
-        "cur_radi":400,         #Radius under which curvature correction is applied
-
-
+        "nbrhalo": 0,            # 0: no neighboring halo treatment
+                                 # 1: displace gas in neighboring halo using dm displacement function
+        "max_shell": 1,          # Largest shell id to be displaced
+        "min_shell": 0,          # Smallest shell id to be displaced
+        "nside": 2048,           # Resolution of the input shell
+        "nside_out": 512,        # Resolution of the output shell
+        "mesh_ref": 1,           # 0: no mesh refinement
+                                 # 1: apply mesh refinement near halo centers, weighted using projected NFW profile
+        "interp": True,          # Apply linear interpolation when collecting displaced particles back to map
+        "curv_radius":400,       # Radius under which curvature correction is applied
         }
     return Bunch(par)
 
 def sim_par():
     par = {
-        "Lbox": 128.0,   #box size of partfile_in
-        "rbuffer": 10.0, #buffer size to take care of boundary conditions
-        #"Nmin_per_halo": 100,
-        "N_chunk": 1      #number of chunks (for multiprocesser: n_core = N_chunk^3)
+        "Lbox": 128.0,    # box size of partfile_in
+        "rbuffer": 10.0,  # buffer size to take care of boundary conditions
+        "N_chunk": 1      # number of chunks (for multiprocesser: n_core = N_chunk^3)
+        }
+    return Bunch(par)
+
+def shell_par():
+    par = {
+        "nbrhalo": 0,            # 0: no neighboring halo treatment
+                                 # 1: displace gas in neighboring halo using dm displacement function
+        "max_shell": 1,          # Largest shell id to be displaced
+        "min_shell": 0,          # Smallest shell id to be displaced
+        "nside": 2048,           # Resolution of the input shell
+        "nside_out": 512,        # Resolution of the output shell
+        "mesh_ref": 1,           # 0: no mesh refinement
+                                 # 1: apply mesh refinement near halo centers, weighted using projected NFW profile
+        "interp": True,          # Apply linear interpolation when collecting displaced particles back to map
+        "curv_radius": 400,      # Radius under which curvature correction is applied
+        "N_cpu": 1,              # Number of CPU to use in multiprocessing
         }
     return Bunch(par)
 
@@ -151,5 +161,6 @@ def par():
         "files": io_files(),
         "code": code_par(),
         "sim": sim_par(),
+        "shell": shell_par(),
         })
     return par

@@ -417,10 +417,10 @@ class IO_shell:
         halo_lc_file = self.param.files.halolc_in
         shell_file_format = self.param.files.shellfile_format
         halo_lc_file_format = self.param.files.halolc_format
-        nside = self.param.code.nside
+        nside = self.param.shell.nside
         npix = hp.nside2npix(nside)
-        max_shell = self.param.code.max_shell
-        min_shell = self.param.code.min_shell
+        max_shell = self.param.shell.max_shell
+        min_shell = self.param.shell.min_shell
         shells = {}
         
         if shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid':
@@ -473,7 +473,7 @@ class IO_shell:
             n_pix = len(val)
             break
         n_side = hp.npix2nside(n_pix)
-        assert n_side == self.param.code.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.code.nside}"
+        assert n_side == self.param.shell.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.shell.nside}"
         return shell_id, map_list
 
     def read_halo_lc_file(self,output_shell_info = False):
@@ -482,8 +482,8 @@ class IO_shell:
         """
         halo_lc_file = self.param.files.halolc_in
         halo_lc_file_format = self.param.files.halolc_format
-        max_shell = self.param.code.max_shell
-        min_shell = self.param.code.min_shell
+        max_shell = self.param.shell.max_shell
+        min_shell = self.param.shell.min_shell
         if (halo_lc_file_format == 'CosmoGrid'):
             lchalo_file = np.load(halo_lc_file)
             shell_info = lchalo_file['shell_info']
