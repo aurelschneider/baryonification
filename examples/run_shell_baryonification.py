@@ -2,6 +2,9 @@ from __future__ import annotations
 import pathlib, subprocess
 import baryonification as bfc
 from time import time
+
+print('Set up the paths. Currently working directory is assumed to be "examples"')
+
 # ----------------------------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------------------------
