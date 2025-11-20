@@ -3,13 +3,15 @@ import healpy as hp
 import numpy as np
 from time import time
 from tqdm import tqdm
-import multiprocessing
+import schwimmbad
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import splrep, splev
 from collections import defaultdict
 import gc
-
+from cosmic_toolbox import logger
 from .params import *
+
+LOGGER = logger.get_logger(__name__)
 
 def arcdistance(distance,radius,param):
     '''Correct distance calculation for low redshift shells'''
@@ -43,18 +45,12 @@ def arcdisplace(displace,position,radius,param):
 
 
 def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_map, halo_pixels_dict,
-              neighbor_map, adjacent_halos_dict, h, output_dir, return_dict):
-    import os
-    import healpy as hp
-    import numpy as np
-    from time import time
-    from tqdm import tqdm
-    import gc
+              neighbor_map, adjacent_halos_dict, h, output_dir):
 
     t0 = time()
     local_list = []
 
-    for pix in tqdm(pix_subset):
+    for pix in pix_subset:
         pix_mass = pixels[pix]
 
         if halo_map[pix]:
@@ -119,9 +115,8 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
     del arr
     gc.collect()
 
-    return_dict[pid] = filename
-    print(f"Process {pid} finished {len(pix_subset)} pixels in {time()-t0:.2f}s.")
-    return 0
+    LOGGER.debug(f"......Process {pid} looped over {len(pix_subset)} pixels. Ellapsed time: {time()-t0:.2f}s.")
+    return pid, filename
 
 
 def assign_weight(dists, rvir):
@@ -175,8 +170,8 @@ def subsample_pixels(nside, pixels, shell_r, halos, param):
     
     halo_map = np.array([pix in halo_pixels_dict for pix in range(npix)])
     neighbor_map &= ~halo_map  # Exclude halo pixels from neighbors
-    print(f"Processed halos and neighbors in {time() - t:.2f} seconds.")
-    t = time()
+
+    
     # Precompute adjacent halos for neighbor pixels
     adjacent_halos_dict = defaultdict(list)
     for pix in np.where(neighbor_map)[0]:
@@ -187,56 +182,63 @@ def subsample_pixels(nside, pixels, shell_r, halos, param):
     
     # Process particle pixels
     particle_pixels = np.where(pixels > 0)[0]
-    print(f"Prepared adjacent halos in {time() - t:.2f} seconds.")
+    LOGGER.info(f"......Pre-processing of the subsampling done. Ellapsed time: {time() - t:.3f} seconds.")
+    
+    """
+    parallelization
+    """
     t = time()
     p_list = []
 
-    manager = multiprocessing.Manager()
-    return_dict = manager.dict()
-    procs = []
-
-    nproc = param.shell.N_cpu
-    idx = np.arange(len(particle_pixels))
-
+    
     t_global = time()
 
-    output_dir = param.files.tmp_files 
-    for p in range(nproc):
-        pix_subset = particle_pixels[p::nproc]#[particle_pixels[i] for i in idx[p::nproc]]
-        globals()[f"p{p}"] = multiprocessing.Process(
-            target=loop_cpus_subsample_particles, args=(p, pix_subset, pixels, nside, shell_r, halo_map, halo_pixels_dict, neighbor_map, adjacent_halos_dict, h, output_dir, return_dict)
-        )
-        print(f"starting process {p}")
-        globals()[f"p{p}"].start()
-        procs.append(globals()[f"p{p}"])
+    output_dir = param.files.tmp_files
 
-    for p in range(nproc):
-        print(f"joining process {p}")
-        globals()[f"p{p}"].join()
+    # ---- prepare arguments for MultiPool ----
+    nproc = param.shell.N_cpu
+    iterable_args = [
+        (p,
+        particle_pixels[p::nproc],
+        pixels,
+        nside,
+        shell_r,
+        halo_map,
+        halo_pixels_dict,
+        neighbor_map,
+        adjacent_halos_dict,
+        h,
+        output_dir)
+        for p in range(nproc)
+    ]
 
-    print(f"All processes finished in {time()-t_global:.2f}s")
-    t = time()
-    # all_data = [np.load(return_dict[p], allow_pickle=True) for p in return_dict.keys()]
-    all_data = [np.load(return_dict[p], mmap_mode='r') for p in sorted(return_dict.keys())]
+    LOGGER.info(f"......Launching subsampling with {nproc} processes...")
+
+    # ---- Run in parallel ----
+    with schwimmbad.MultiPool(processes=nproc) as pool:
+        results = list(pool.starmap(loop_cpus_subsample_particles, iterable_args))
+
+    LOGGER.info(f"......Subsampling with {nproc} processes done. Ellapsed time {time()-t_global:.2f}s")
+
+    # results = [(pid, filename), ...]
+    results = sorted(results, key=lambda x: x[0])
+    file_list = [fn for (_, fn) in results]
+
+    # Load data
+    all_data = [np.load(fn) for fn in file_list]
     p_all = np.concatenate(all_data)
 
-    #remove temp files
-    for p in return_dict.values():
-        os.remove(p)
+    # remove temp files
+    for fn in file_list:
+        os.remove(fn)
 
-    # p_all = np.sort(p_all, order='pix')
     keep_fields = ['pos', 'mass', 'tag']
     p_all_filtered = p_all[keep_fields]
-    # perm = np.loadtxt('/cluster/work/refregier/jbucko/shell_baryonification/notebooks/perm.txt')
-    # p_all = p_all[perm]
-    tt = time()
-    print('intermediate print', tt-t)
+
     p_list = p_all_filtered
 
-
-    print(f"Final particle list has {len(p_list)} entries, should be {len(particle_pixels)}")
-    # np.save('./tmp/particle_uv_final.npy', p_list)
     return p_list
+
 
 
 def get_child_pixels(parent_nside, pix, child_nside):
@@ -252,12 +254,13 @@ def particle_worker(task):
     mesh_ref == 1: Subgrid sampling following projected NFW profile.
     '''
     i, pixels, h, param = task
-    shell_cov = np.sqrt(h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)
-
-    p_dt = np.dtype([("x", '>f8'), ("y", '>f8'), ("z", '>f8'), ("M", '>f4'), ('ref_order', np.uint8)])
-
     mesh_ref = param.shell.mesh_ref
     nside = param.shell.nside
+    
+    LOGGER.info(f"......Subsampling with mesh_ref={mesh_ref}")
+    
+    shell_cov = np.sqrt(h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)
+    p_dt = np.dtype([("x", '>f8'), ("y", '>f8'), ("z", '>f8'), ("M", '>f4'), ('ref_order', np.uint8)])
 
     if mesh_ref == 0:
         idx = np.where(pixels > 0)[0]
@@ -429,108 +432,3 @@ def get_healpix_map_gaussian(p, param, star_fraction=None):
 
         final_map += hp.ud_grade(this_map, nside_out=nside_out, power=-2)
     return final_map.astype(np.float16)
-
-
-
-# def get_particles_uv_full(nside, pixels, shell_r, h):
-#     npix = hp.nside2npix(nside)
-#     particle_pixels = np.where(pixels > 0)[0]
-#     p_list = []
-    
-#     halo_pos_mpc = np.vstack((h['x'], h['y'], h['z'])).T
-#     halo_norms = np.linalg.norm(halo_pos_mpc, axis=1)
-#     halo_vectors = halo_pos_mpc / halo_norms[:, None]
-    
-#     rvir_mpc = h['rvir']
-#     halo_theta_vir = np.arctan(rvir_mpc / halo_norms)
-    
-#     halo_influence_map = np.zeros(npix, dtype=bool)
-#     adjacent_halos_dict = defaultdict(list)
-    
-#     for i, (vec, theta_vir) in enumerate(zip(halo_vectors, halo_theta_vir)):
-#         if theta_vir <= 0:
-#             continue
-#         pix_list = hp.query_disc(nside, vec, theta_vir, nest=False, inclusive=False)
-#         for pix in pix_list:
-#             adjacent_halos_dict[pix].append(i)
-#             halo_influence_map[pix] = True
-    
-#     halo_map = np.zeros(npix, dtype=bool)
-#     halo_pixels_dict = defaultdict(list)
-#     for i, vec in enumerate(halo_vectors):
-#         pix_center = hp.vec2pix(nside, vec[0], vec[1], vec[2], nest=False)
-#         halo_pixels_dict[pix_center].append(i)
-#         halo_map[pix_center] = True
-    
-#     neighbor_map = halo_influence_map & ~halo_map
-
-#     def assign_weight(dists, rvir_mpc):
-#         x = dists / rvir_mpc
-#         weight = np.zeros_like(x)
-        
-#         mask1 = x < 1
-#         if np.any(mask1):
-#             sqrt1 = np.sqrt((1 - x[mask1]) / (1 + x[mask1]))
-#             weight[mask1] = (1 - (2 / np.sqrt(1 - x[mask1]**2)) * np.arctanh(sqrt1)) / (x[mask1]**2 - 1)
-        
-#         mask2 = np.isclose(x, 1, atol=1e-6)
-#         if np.any(mask2):
-#             weight[mask2] = 1.0 / 3.0
-        
-#         mask3 = x > 1
-#         if np.any(mask3):
-#             sqrt2 = np.sqrt((x[mask3] - 1) / (1 + x[mask3]))
-#             weight[mask3] = (1 - (2 / np.sqrt(x[mask3]**2 - 1)) * np.arctan(sqrt2)) / (x[mask3]**2 - 1)
-        
-#         return weight
-
-#     for pix in particle_pixels:
-#         pix_mass = pixels[pix]
-        
-#         if halo_map[pix]:
-#             # Case A: Exact halo pixel
-#             halos_in_pixel = halo_pixels_dict.get(pix, [])
-#             sub_nside = 4 * nside
-#             grandchildren = get_child_pixels(nside, pix, sub_nside)
-#             dirs = np.array(hp.pix2vec(sub_nside, grandchildren, nest=False)).T
-#             sub_positions = dirs * shell_r
-            
-#             mass_weights = np.ones(16)
-#             for halo_idx in halos_in_pixel:
-#                 dists = np.linalg.norm(sub_positions - halo_pos_mpc[halo_idx], axis=1)
-#                 mass_weights += assign_weight(dists, rvir_mpc[halo_idx])
-#             if halos_in_pixel:
-#                 mass_weights /= np.sum(mass_weights)
-            
-#             for j in range(16):
-#                 mass = pix_mass * mass_weights[j]
-#                 p_list.append((sub_positions[j], mass, 2))
-                
-#         elif neighbor_map[pix]:
-#             # Case B: Pixel within virial radius
-#             covering_halos = adjacent_halos_dict.get(pix, [])
-#             sub_nside = 2 * nside
-#             children = get_child_pixels(nside, pix, sub_nside)
-#             dirs = np.array(hp.pix2vec(sub_nside, children, nest=False)).T
-#             sub_positions = dirs * shell_r
-            
-#             mass_weights = np.ones(4)
-#             for halo_idx in covering_halos:
-#                 dists = np.linalg.norm(sub_positions - halo_pos_mpc[halo_idx], axis=1)
-#                 mass_weights += assign_weight(dists, rvir_mpc[halo_idx])
-#             if covering_halos:
-#                 mass_weights /= np.sum(mass_weights)
-            
-#             for j in range(4):
-#                 mass = pix_mass * mass_weights[j]
-#                 p_list.append((sub_positions[j], mass, 1))
-                
-#         else:
-#             # Case C: Regular pixel
-#             dirs = np.array(hp.pix2vec(nside, pix, nest=False))
-#             pos = dirs * shell_r
-#             p_list.append((pos, pix_mass, 0))
-            
-#     return p_list
-
-

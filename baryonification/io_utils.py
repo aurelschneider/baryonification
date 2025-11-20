@@ -3,20 +3,18 @@ CALCULATE DISPLACEMENT FUNCTION FOR A GRID OF M AND C
 PRINT INFORMATION INTO TEMPORARY FILE
 
 """
-
 import numpy as np
 from scipy import spatial
 import h5py
 import healpy as hp
-from scipy.interpolate import splrep,splev
 from numpy.lib.recfunctions import append_fields
-
-import schwimmbad
+from cosmic_toolbox import logger
 
 from .constants import *
 from .profiles import *
 from .shell_utils import *
 
+LOGGER = logger.get_logger(__name__)
 
 class IO_nbody:
     """
@@ -413,6 +411,7 @@ class IO_shell:
         """
         Read in lightcone healpix, adopt units.
         """
+        LOGGER.info(f"Reading healpix shells...")
         shell_file_in = self.param.files.shellfile_in
         halo_lc_file = self.param.files.halolc_in
         shell_file_format = self.param.files.shellfile_format
@@ -433,7 +432,6 @@ class IO_shell:
             for i in shell_id:
                 pixels = shell_data[i, :]
                 shells[i] = pixels
-            print('Read healpix file done!')
         elif shell_file_format == 'CosmoGrid_nersc' and halo_lc_file_format == 'CosmoGrid_nersc':
             shell_file = h5py.File(shell_file_in,'r')
             with h5py.File(halo_lc_file,'r') as lchalo_file:
@@ -444,7 +442,6 @@ class IO_shell:
                 pixels = shell_file["/nobaryon_shells/shell{:03d}".format(i)][:]
                 shells[i] = pixels
             shell_file.close()
-            print('Read healpix file done!')
         elif shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid_nersc':
             # with better halos, but higher-res z-shells
             shell_file = np.load(shell_file_in)
@@ -456,7 +453,6 @@ class IO_shell:
             for i in shell_id:
                 pixels = shell_data[i, :]
                 shells[i] = pixels
-            print('Read healpix file done!')
         elif shell_file_format == 'box_replication':
             shell_data   = np.load(shell_file_in)  ["shells"]
             shell_id = range(min_shell,max_shell)
@@ -466,7 +462,6 @@ class IO_shell:
         else:
             print("Other format not supported")
             exit()
-        print('shells:',shells)
         map_list = [shells[i] for i in shell_id]
         # check tthe consistency of the shell length with nside
         for key, val in shells.items():
@@ -474,12 +469,14 @@ class IO_shell:
             break
         n_side = hp.npix2nside(n_pix)
         assert n_side == self.param.shell.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.shell.nside}"
+        LOGGER.info(f"Reading healpix shells done ✅\n")
         return shell_id, map_list
 
     def read_halo_lc_file(self,output_shell_info = False):
         """
         Read in halo lightcone
         """
+        LOGGER.info(f"Reading lightcone halo catalog...")
         halo_lc_file = self.param.files.halolc_in
         halo_lc_file_format = self.param.files.halolc_format
         max_shell = self.param.shell.max_shell
@@ -517,7 +514,6 @@ class IO_shell:
                 h['cvir'] = select_halo['cvir']
                 h = h[h['Mvir'] > self.param.code.Mhalo_min]
                 halo_shell[i] = h
-            print("Read halo file done!")
             del lchalo_file, lchalo, h
         elif (halo_lc_file_format == 'CosmoGrid_nersc'):
             lchalo_file = h5py.File(halo_lc_file,'r')
@@ -576,16 +572,19 @@ class IO_shell:
                 h['cvir'] = select_concentrations
                 h = h[h['Mvir'] > self.param.code.Mhalo_min]
                 halo_shell[i] = h
-            print("Read halo file done!")
             lchalo_file.close()
             del h#, halos_cosmogrid_old
         else:
             print("Other halo file formats not supported")
+        
         h_list = [halo_shell[i] for i in shell_id]
         thickness_list = [thickness[i] for i in shell_id]
         redshift_list = [redshift[i] for i in shell_id]
+        
         if output_shell_info == True:
             return h_list, thickness_list, redshift_list, shell_info    
+        
+        LOGGER.info(f"Reading lightcone halo done ✅\n")
         return h_list, thickness_list, redshift_list
 
     def write_shell_file(self,gas_shell,dm_shell,star_shell):
@@ -597,6 +596,6 @@ class IO_shell:
             save_dict_to_hdf5(f, 'dm', dm_shell)
             save_dict_to_hdf5(f, 'gas', gas_shell)
             save_dict_to_hdf5(f, 'star', star_shell)
-            print(f"data saved to {shell_file_out}")
+        LOGGER.info(f"Baryonified shells saved to {shell_file_out}")
         return
 

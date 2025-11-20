@@ -2,13 +2,13 @@ import numpy as np
 from scipy import spatial
 import pickle as pkl
 from scipy.interpolate import splrep,splev
-from numpy.lib.recfunctions import append_fields
 
 import schwimmbad
-import multiprocessing
+
 import gc
 from tqdm import tqdm
 from time import time
+from cosmic_toolbox import logger
 
 from .constants import *
 from .cosmo import CosmoCalculator
@@ -16,6 +16,7 @@ from .profiles import Profiles, fstar_fct
 from .io_utils import IO_nbody, IO_halo, IO_shell
 from .shell_utils import *
 
+LOGGER = logger.get_logger(__name__)
 
 class ParticleDisplacer:
     """
@@ -153,19 +154,6 @@ class ParticleDisplacer:
         bias_tck = splrep(vc_m, vc_bias, s=0)
         corr_tck = splrep(vc_r, vc_corr, s=0)    
         
-        #Read cosmic variance/nu/correlation and interpolate
-        #cosmofile = self.param.files.cosmofct
-        #try:
-        #    vc_r, vc_m, vc_var, vc_bias, vc_corr = np.loadtxt(cosmofile, usecols=(0,1,2,3,4), unpack=True)
-        #    var_tck  = splrep(vc_m, vc_var, s=0)
-        #    bias_tck = splrep(vc_m, vc_bias, s=0)
-        #    corr_tck = splrep(vc_r, vc_corr, s=0)
-        #except IOError:
-        #    print('IOERROR: Cosmofct file does not exist!')
-        #    print('Define par.files.cosmofct = "/path/to/file"')
-        #    print('Run: cosmo = Cosmology(par) and cosmo.compute_cosmology() to create file')
-        #    exit()
-
         if (self.param.code.multicomp==True):
 
             #Copy into p_temp
@@ -347,46 +335,6 @@ class ParticleDisplacer:
                             re_ov_bi = (h_chunk['c_ov_a'][i]*h_chunk['b_ov_a'][i])**(1/3)/h_chunk['b_ov_a'][i]
                             re_ov_ai = (h_chunk['c_ov_a'][i]*h_chunk['b_ov_a'][i])**(1/3)
 
-                            '''
-                            #CALCULATE INERTIA TENSOR (does not work at boundaries of chuncks, provides same results than ahf if inertia tensor is evaluated at rvir)
-                            if (h_chunk['x'][i] > 0 and h_chunk['x'][i] < Lbox and h_chunk['y'][i] > 0 and h_chunk['y'][i] < Lbox and h_chunk['z'][i] > 0 and h_chunk['z'][i] < Lbox):
-                                #define relative particle position
-                                rel_dm_part_pos_x = p_darkmatter['x'][ipbool]-h_chunk['x'][i]
-                                rel_dm_part_pos_y = p_darkmatter['y'][ipbool]-h_chunk['y'][i]
-                                rel_dm_part_pos_z = p_darkmatter['z'][ipbool]-h_chunk['z'][i]
-                                rel_dm_part_pos = [rel_dm_part_pos_x,rel_dm_part_pos_y,rel_dm_part_pos_z]
-
-                                relx_red = rel_dm_part_pos_x[rpFDM<1.0*h_chunk['rvir'][i]]
-                                rely_red = rel_dm_part_pos_y[rpFDM<1.0*h_chunk['rvir'][i]]
-                                relz_red = rel_dm_part_pos_z[rpFDM<1.0*h_chunk['rvir'][i]]
-
-                                #inertia tensor
-                                Sxx = np.sum(relx_red*relx_red)/len(relx_red)
-                                Sxy = np.sum(relx_red*rely_red)/len(relx_red)
-                                Sxz = np.sum(relx_red*relz_red)/len(relx_red)
-                                Syx = np.sum(rely_red*relx_red)/len(rely_red)
-                                Syy = np.sum(rely_red*rely_red)/len(rely_red)
-                                Syz = np.sum(rely_red*relz_red)/len(rely_red)
-                                Szx = np.sum(relz_red*relx_red)/len(relz_red)
-                                Szy = np.sum(relz_red*rely_red)/len(relz_red)
-                                Szz = np.sum(relz_red*relz_red)/len(relz_red)
-
-                                SS = np.array([[Sxx,Sxy,Sxz],[Syx,Syy,Syz],[Szx,Szy,Szz]])
-
-                                #eigenvalues, eigenvectors
-                                eigenval, eigenvec = np.linalg.eig(SS)
-
-                                ai, bi, ci = np.real(eigenval)**0.5
-                                re = (ai*bi*ci)**(1/3)
-                                print("a, b, c, re = ",ai,bi,ci,re)
-
-                                #rotation amtrix
-                                Mrot = np.column_stack((np.real(eigenvec[:,2]),np.real(eigenvec[:,1]),np.real(eigenvec[:,0])))
-
-                                #rotate particles
-                                rel_dm_part_pos_rot = np.linalg.inv(Mrot).dot(rel_dm_part_pos)
-                            '''
-
                             #calculate displacement
                             DpFDM_sph_rot_x = np.zeros(len(rel_dm_part_pos_rot[0]))
                             DpFDM_sph_rot_y = np.zeros(len(rel_dm_part_pos_rot[1]))
@@ -400,12 +348,6 @@ class ParticleDisplacer:
                             DpFDM_sph_rot_z = (re_ov_ci - 1) * rel_dm_part_pos_rot[2] * self.sph_corr(rpFDM,h_chunk['rvir'][i],AA,nn,th)
                             DpFDM_sph_rot = [DpFDM_sph_rot_x,DpFDM_sph_rot_y,DpFDM_sph_rot_z]
                             
-                            
-                            #DpFDM_sph_rot_x[rpFDM<1.0*h_chunk['rvir'][i]] = (re_ov_ai - 1) * rel_dm_part_pos_rot[0][rpFDM<1.0*h_chunk['rvir'][i]]
-                            #DpFDM_sph_rot_y[rpFDM<1.0*h_chunk['rvir'][i]] = (re_ov_bi - 1) * rel_dm_part_pos_rot[1][rpFDM<1.0*h_chunk['rvir'][i]]
-                            #DpFDM_sph_rot_z[rpFDM<1.0*h_chunk['rvir'][i]] = (re_ov_ci - 1) * rel_dm_part_pos_rot[2][rpFDM<1.0*h_chunk['rvir'][i]]
-                            #DpFDM_sph_rot = [DpFDM_sph_rot_x,DpFDM_sph_rot_y,DpFDM_sph_rot_z]
-
                             #Rotate back
                             DpFDM_sph_rotback = Mrot.dot(DpFDM_sph_rot)
 
@@ -603,13 +545,7 @@ class ParticleDisplacer:
             p_gas_chunk['temp'] = DpBAR['temp'][DpBAR['id']<0.5]
             p_gas_chunk['pres'] = DpBAR['pres'][DpBAR['id']<0.5]
 
-            ##Add temperature floor
-            #zz = self.param.cosmo.z
-            #T0 = 1e4*(1+zz)/2 # [K] McQuinn (1512.00086,below Eq. 6)
-            #p_gas_chunk['temp'] = p_gas_chunk['temp'] + T0
-            
             del p_gas_temporary_chunk 
-            
             del p_baryons
             del p_darkmatter
                 
@@ -688,49 +624,6 @@ class ParticleDisplacer:
                         Dp['y'][ipbool] += (p_chunk['y'][ipbool]-h_chunk['y'][i])*DrpDMB/rpDMB
                         Dp['z'][ipbool] += (p_chunk['z'][ipbool]-h_chunk['z'][i])*DrpDMB/rpDMB
 
-                        '''
-                        #Sphericity correction (for singlecomp / not tested!)
-                        if (self.param.code.spher_corr==True):
-
-                            # INERTIA TENSOR FROM AHF (what about rockstar?)
-                            #define relative particle position (should be done further up)                                                                                                                                                                                            
-                            rel_part_pos_x = p_chunk['x'][ipbool]-h_chunk['x'][i]
-                            rel_part_pos_y = p_chunk['y'][ipbool]-h_chunk['y'][i]
-                            rel_part_pos_z = p_chunk['z'][ipbool]-h_chunk['z'][i]
-                            rel_part_pos = [rel_part_pos_x,rel_part_pos_y,rel_part_pos_z]
-
-                            #rotation amtrix
-                            Ea = [h_chunk['Eax'][i],h_chunk['Eay'][i],h_chunk['Eaz'][i]]
-                            Eb = [h_chunk['Ebx'][i],h_chunk['Eby'][i],h_chunk['Ebz'][i]]
-                            Ec = [h_chunk['Ecx'][i],h_chunk['Ecy'][i],h_chunk['Ecz'][i]]
-                            Mrot = np.column_stack((Ea,Eb,Ec))
-
-                            #rotate particles
-                            rel_part_pos_rot = np.linalg.inv(Mrot).dot(rel_part_pos)
-
-                            #Displacement correction
-                            re_ov_ci = (h_chunk['c_ov_a'][i]*h_chunk['b_ov_a'][i])**(1/3)/h_chunk['c_ov_a'][i]
-                            re_ov_bi = (h_chunk['c_ov_a'][i]*h_chunk['b_ov_a'][i])**(1/3)/h_chunk['b_ov_a'][i]
-                            re_ov_ai = (h_chunk['c_ov_a'][i]*h_chunk['b_ov_a'][i])**(1/3)
-
-                            #calculate displacement
-                            Dp_sph_rot_x = np.zeros(len(rel_dm_part_pos_rot[0]))
-                            Dp_sph_rot_y = np.zeros(len(rel_dm_part_pos_rot[1]))
-                            Dp_sph_rot_z = np.zeros(len(rel_dm_part_pos_rot[2]))
-                            
-                            Dp_sph_rot_x[rpDMB<1.0*h_chunk['rvir'][i]] = (re_ov_ai - 1) * rel_part_pos_rot[0][rpDMB<1.0*h_chunk['rvir'][i]]
-                            Dp_sph_rot_y[rpDMB<1.0*h_chunk['rvir'][i]] = (re_ov_bi - 1) * rel_part_pos_rot[1][rpDMB<1.0*h_chunk['rvir'][i]]
-                            Dp_sph_rot_z[rpDMB<1.0*h_chunk['rvir'][i]] = (re_ov_ci - 1) * rel_part_pos_rot[2][rpDMB<1.0*h_chunk['rvir'][i]]
-                            Dp_sph_rot = [Dp_sph_rot_x,Dp_sph_rot_y,Dp_sph_rot_z]
-
-                            #Rotate back
-                            Dp_sph_rotback = Mrot.dot(Dp_sph_rot)
-
-                            Dp_sph['x'][ipbool] += DpFDM_sph_rotback[0]
-                            Dp_sph['y'][ipbool] += DpFDM_sph_rotback[1]
-                            Dp_sph['z'][ipbool] += DpFDM_sph_rotback[2]
-                        '''    
-
             #Displace 
             p_chunk['x'] += Dp['x'] + Dp_sph['x']
             p_chunk['y'] += Dp['y'] + Dp_sph['y']
@@ -757,9 +650,12 @@ class ParticleDisplacer:
 
 
 def worker_method(args):
-    obj, process, idx, task, args_for_loop_halo_chunks, return_dict_DpBAR, return_dict_DpFDM = args
-    return obj.loop_halo_chunks(process, idx, task, args_for_loop_halo_chunks, return_dict_DpBAR, return_dict_DpFDM)
-
+    """
+    wrapper function of the loop_halo_chunks
+    to make it the top-level function, important for parallelization
+    """
+    obj, process, idx, task, args_for_loop_halo_chunks = args
+    return obj.loop_halo_chunks(process, idx, task, args_for_loop_halo_chunks)
 
 class ShellDisplacer:
     """
@@ -768,30 +664,24 @@ class ShellDisplacer:
     def __init__(self,param):
         self.param = param
 
-    def displ(self, rbin, MINITIAL, MFINAL):
-        """
-        Calculates the displacement 
-        """
-        MFINAL_tck = splrep(rbin, MFINAL, s=0, k=3)
-        MFINALinv_tck = splrep(MFINAL, rbin, s=0, k=3)
-        rFINAL = splev(MINITIAL, MFINALinv_tck, der=0)
-        DFINAL = rFINAL - rbin
-        return DFINAL
-
     def perform_shell_displacement(self):
         """
         Reading in pixel and halo files
         dispalcing particles, writing healpix file
         """
+        LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
+        
         io_shell = IO_shell(self.param)
         h_list, thickness_list, redshift_list = io_shell.read_halo_lc_file()
         shell_id, map_list = io_shell.read_healpix_file()
+        
+        
         p_list = self.perform_get_particle(map_list, h_list)
         del map_list
-        print(f"Number of shells: {len(shell_id)}")
-        print(f"Number of halo lists: {len(h_list)}")
+        
         gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list)
         io_shell.write_shell_file(gas_shell,dm_shell,star_shell)
+        
         return 0
 
     def perform_get_particle(self, map_list, h_list):
@@ -800,25 +690,22 @@ class ShellDisplacer:
         """
         num_processes = int(self.param.shell.max_shell - self.param.shell.min_shell)
         if num_processes != len(map_list):
-            raise ValueError(f"Mismatch: {nshells} shells but num_processes={num_processes}")
+            raise ValueError(f"Mismatch: {len(map_list)} shells but num_processes={num_processes}")
             
         tasks = [(i, map_list[i], h_list[i], self.param) for i in range(num_processes)]
-        print(f"Sampling particles in parallel, number of processes: {num_processes}")
-        # pool = schwimmbad.choose_pool(mpi=False, processes=num_processes)
-        # results = list(pool.map(particle_worker, tasks))
-        # pool.close()
-
+        
         output_dir = self.param.files.tmp_files
         results = []
         for i_proc in range(num_processes):
+            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes}")
             t1 = time()
-            print(f"Sampling particles for shell {i_proc+1}/{num_processes}")
-            filename_pixleparticle = f"{output_dir}/pixelparticle_{self.param.files.shellfile_in.replace('/','_')}_shell_{self.param.shell.min_shell+i_proc}.pkl"
+            filename_pixleparticle = f"{output_dir}/pixel_particles__{self.param.files.shellfile_in.replace('/','_').replace('.','_')}___shell_{self.param.shell.min_shell+i_proc}.pkl"
             if os.path.exists(filename_pixleparticle):
-                print(f"Found existing pixelparticle shell {self.param.shell.min_shell+i_proc}, loading file {filename_pixleparticle}")
+                LOGGER.info(f"......Found existing pixel particles file for shell {self.param.shell.min_shell+i_proc}, loading file {filename_pixleparticle}")
                 with open(filename_pixleparticle, "rb") as pkl_file:
                     result = pkl.load(pkl_file)
             else:
+                LOGGER.info(f"......No existing pixel particles file found for shell {self.param.shell.min_shell+i_proc}, entering particle subsampling")
                 result = particle_worker(tasks[i_proc])
             
                 # store subsampled particles to disk (if output_pixelparticle_file=TRUE) 
@@ -828,7 +715,7 @@ class ShellDisplacer:
             
             results.append(result)
             t2 = time()
-            print(f"[perform_get_particle] Time taken: {t2 - t1:.2f} seconds")
+            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes} done ✅. Ellapsed time: {t2 - t1:.3f} seconds.\n")
 
         particle_shell = {i: p for i, p in results}
         return [particle_shell[i] for i in sorted(particle_shell.keys())]
@@ -837,6 +724,7 @@ class ShellDisplacer:
         '''
         displace particles on the shell with the halo file
         '''
+        LOGGER.info(f"Displacing shells...")
         num_processes = int(self.param.shell.max_shell - self.param.shell.min_shell)
         
         gasdata = {}
@@ -844,21 +732,121 @@ class ShellDisplacer:
         stardata = {}
 
         tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, np.repeat(self.param,num_processes)))
-        print(f"Number of tasks: {len(tasks)}")
 
         for i_proc in range(num_processes):
+            LOGGER.info(f"......Shell {i_proc+1}/{num_processes}")
             t1 = time()
-            print(f"Processing shell {i_proc+1}/{num_processes}")
             result = self.loop_halos(tasks[i_proc])
             i_shell = result[0]
             gasdata[i_shell] = result[1]
             dmdata[i_shell] = result[2]
             stardata[i_shell] = result[3]
             t2 = time()
-            print(f"[displace_shell] Time taken: {t2 - t1:.2f} seconds")
+            LOGGER.info(f"......Shell {i_proc+1}/{num_processes} done. Ellapsed time: {t2 - t1:.3f} seconds.")
+        LOGGER.info(f"Displacing shells done ✅\n")
         return gasdata, dmdata, stardata
 
-    def loop_halo_chunks(self, i_cpu, idx_local, task, args_for_loop_halo_chunks, return_dict_DpBAR, return_dict_DpFDM):
+    def loop_halos(self, task):
+        '''
+        loop over halos and displace particles
+        '''
+        cosmo_calculator = CosmoCalculator(self.param)
+
+        shell_id, h, thickness, p, redshift, param = task
+        
+        shell_cov = (h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)**0.5
+    
+        param.cosmo.z = redshift
+
+        vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo_calculator.compute_cosmology()
+        var_tck  = splrep(vc_m, vc_var, s=0)
+        bias_tck = splrep(vc_m, vc_bias, s=0)
+        corr_tck = splrep(vc_r, vc_corr, s=0)
+
+        #build tree for dm and baryons, separate particles
+        #id of all halo particle (ihalo=0 means field particles)
+        p_tree = spatial.cKDTree(list(zip(p['x'],p['y'],p['z'])), leafsize=100)
+        iphalo = np.zeros(len(p))
+        multi_halo = np.zeros(len(p), dtype=bool)
+        for i in range(len(h['Mvir'])):
+            ip   = np.array(p_tree.query_ball_point((h['x'][i], h['y'][i], h['z'][i]), h['rvir'][i]))
+            if len(ip)>0:
+                previously = iphalo[ip]
+                collided  = (previously != 0) & (previously != i)
+                multi_halo[ip[collided]] = True
+                iphalo[ip] = i
+
+        #separating particles
+        p_darkmatter = p.copy()
+        p_baryons = p.copy()
+        n_p = len(p)
+        del p
+        
+        """
+        parallelization
+        """
+        gl_start = time()
+
+        nproc = min(param.shell.N_cpu, len(h["Mvir"]))
+        LOGGER.debug(f"......Looping over halos {len(h)} halos, using {nproc} CPUs.")
+
+        idx = np.arange(len(h["Mvir"]))
+
+        # prepare argument list
+        args_for_loop_halo_chunks = shell_cov, var_tck, bias_tck, corr_tck, p_tree, p_darkmatter, p_baryons, iphalo, multi_halo, n_p
+        iterable_args = [
+            (self, i_proc, idx[i_proc::nproc], task, args_for_loop_halo_chunks)
+            for i_proc in range(nproc)
+        ]
+
+        # ---- parallel execution ----
+        with schwimmbad.MultiPool(processes=nproc) as pool:
+            results = list(pool.map(worker_method, iterable_args))
+        # ----------------------------
+
+        gl_end = time()
+        LOGGER.debug(f"......Looping over halos done. Ellapsed time: {gl_end - gl_start}")
+
+        # results = [(DpBAR_part, DpFDM_part), ...]
+        dpbar_parts = [r[0] for r in results]
+        dpfdm_parts = [r[1] for r in results]
+
+        LOGGER.debug(f"......Summing displacements...")
+        DpBAR = self.sum_structured_arrays_from_files(dpbar_parts)
+        DpFDM = self.sum_structured_arrays_from_files(dpfdm_parts)
+        LOGGER.debug(f"......Summing displacements done.")
+
+        gc.collect()
+
+        LOGGER.info(f"......Applying displacements around halos...")
+        t = time()
+        #Displace particles and separarte BAR into HGA, CGA, SGA
+        DpBAR_c = arcdisplace(np.column_stack((DpBAR['x'], DpBAR['y'], DpBAR['z'])),
+                            np.column_stack((p_baryons['x'], p_baryons['y'], p_baryons['z'])),shell_cov,param)
+        p_baryons['x'] += DpBAR_c[:,0]
+        p_baryons['y'] += DpBAR_c[:,1]
+        p_baryons['z'] += DpBAR_c[:,2]
+
+        DpFDM_c = arcdisplace(np.column_stack((DpFDM['x'], DpFDM['y'], DpFDM['z'])),
+                            np.column_stack((p_darkmatter['x'], p_darkmatter['y'], p_darkmatter['z'])),shell_cov,param)
+        p_darkmatter['x'] += DpFDM_c[:,0]
+        p_darkmatter['y'] += DpFDM_c[:,1]
+        p_darkmatter['z'] += DpFDM_c[:,2]
+        del DpFDM_c, DpBAR_c
+        LOGGER.info(f"......Applying displacements around halos done. Ellapsed time: {time()-t:.3f} seconds.")
+        t = time()
+        #convert position to healpix index and store the data
+        LOGGER.info(f"......Converting particles to healpix maps...")
+        shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'])
+        shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None)
+        shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'])
+        LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds.")
+        return shell_id, shell_gas, shell_dm, shell_star
+
+    def loop_halo_chunks(self, i_cpu, idx_local, task, args_for_loop_halo_chunks):
+        
+        LOGGER.debug(f'......process {i_cpu} starting with {len(idx_local)} halos...')
+        ts = time()
 
         shell_id, h, thickness, p, redshift, param = task
         shell_cov, var_tck, bias_tck, corr_tck, p_tree, p_darkmatter, p_baryons, iphalo, multi_halo, n_p = args_for_loop_halo_chunks
@@ -869,9 +857,9 @@ class ShellDisplacer:
         DpBAR = np.zeros(n_p,dtype=Dp_type)
         DpFDM = np.zeros(n_p,dtype=Dp_type)
         
-        print(f'process {i_cpu} starting with {len(idx_local)} halos')
+        
         # for j in tqdm(idx_local, desc=f"CPU {i_cpu} processing halos", position=i_cpu):
-        for j in tqdm(idx_local):
+        for j in idx_local:
             
             #select host haloes (subhaloes >= 1)
             if (h['IDhost'][j] < 0):
@@ -941,12 +929,7 @@ class ShellDisplacer:
                 rball = max(rball_BAR,rball_FDM)
                 # print('rball before arc = ', rball)
                 rball = euclidean_distance(rball,shell_cov,param)
-                # print('rball after arc = ', rball,shell_cov)
-                #print('cvir = ',h['cvir'][j])
-                #print('rball/rvir = ', rball/h['rvir'][j])
-
-                # print('Mvir, rvir, rball = ', Mvir, rvir, rball)
-
+               
                 #particle ids within rball
                 ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
                 # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
@@ -966,11 +949,6 @@ class ShellDisplacer:
 
                     if param.shell.nbrhalo == 1:
 
-                        #ids of baryonic particles that are in neighbouring haloes 
-                        #ipbool_nbrhaloes = ipbool[np.where(rpBAR > rvir)]
-                        #ipbool_nbrhaloes = ipbool_nbrhaloes[np.where(iphalo[ipbool_nbrhaloes]>0)]
-                        #ipbool_wo_nbrhaloes = np.setdiff1d(ipbool,ipbool_nbrhaloes)
-                        
                         mask_out = (rpBAR > rvir) & (iphalo[ipbool] > 0)    
                         mask = mask_out | multi_halo[ipbool]
                         ipbool_nbrhaloes    = ipbool[mask]
@@ -1080,14 +1058,14 @@ class ShellDisplacer:
         output_dir = self.param.files.tmp_files
         filenameDpBAR = f'{output_dir}/DpBAR_shell_{shell_id}_cpu_{i_cpu}.npy'
         filenameDrpFDM = f'{output_dir}/DrpFDM_shell_{shell_id}_cpu_{i_cpu}.npy'
+
+        # save the temporary files
         np.save(filenameDpBAR, DpBAR)
         np.save(filenameDrpFDM, DpFDM)
-        
-        return_dict_DpBAR.append(filenameDpBAR)
-        return_dict_DpFDM.append(filenameDrpFDM)
-        
+
         del rpFDM, rpBAR, DrpFDM, DrpBAR
-        return 0
+        LOGGER.debug(f'......process {i_cpu} starting with {len(idx_local)} halos done. Ellapsed time: {time()-ts}')
+        return filenameDpBAR, filenameDrpFDM
 
     def sum_structured_arrays_from_files(self,filenames):
         """
@@ -1107,7 +1085,7 @@ class ShellDisplacer:
         del first
 
         # Loop through remaining files one by one
-        for fn in tqdm(filenames[1:]):
+        for fn in filenames[1:]:
             arr = np.load(fn)
             out["x"] += arr["x"]
             out["y"] += arr["y"]
@@ -1119,101 +1097,12 @@ class ShellDisplacer:
             os.remove(fn)
         return out
 
-    def loop_halos(self, task):
-        '''
-        loop over halos and displace particles
-        '''
-        cosmo_calculator = CosmoCalculator(self.param)
-
-        shell_id, h, thickness, p, redshift, param = task
-        print(f'{len(h)} halos in current task')
-        
-        shell_cov = (h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)**0.5
-    
-        param.cosmo.z = redshift
-
-        vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo_calculator.compute_cosmology()
-        var_tck  = splrep(vc_m, vc_var, s=0)
-        bias_tck = splrep(vc_m, vc_bias, s=0)
-        corr_tck = splrep(vc_r, vc_corr, s=0)
-
-        #build tree for dm and baryons, separate particles
-        #id of all halo particle (ihalo=0 means field particles)
-        p_tree = spatial.cKDTree(list(zip(p['x'],p['y'],p['z'])), leafsize=100)
-        iphalo = np.zeros(len(p))
-        multi_halo = np.zeros(len(p), dtype=bool)
-        for i in range(len(h['Mvir'])):
-            ip   = np.array(p_tree.query_ball_point((h['x'][i], h['y'][i], h['z'][i]), h['rvir'][i]))
-            if len(ip)>0:
-                previously = iphalo[ip]
-                collided  = (previously != 0) & (previously != i)
-                multi_halo[ip[collided]] = True
-                iphalo[ip] = i
-
-        #separating particles
-        p_darkmatter = p.copy()
-        p_baryons = p.copy()
-        n_p = len(p)
-        del p
-
-        args_for_loop_halo_chunks = shell_cov, var_tck, bias_tck, corr_tck, p_tree, p_darkmatter, p_baryons, iphalo, multi_halo, n_p
-
+    def displ(self, rbin, MINITIAL, MFINAL):
         """
-        parallelization
+        Calculates the displacement 
         """
-        with multiprocessing.Manager() as manager:
-        # manager = multiprocessing.Manager()
-            return_dict_DpBAR = manager.list()
-            return_dict_DpFDM = manager.list()
-            
-            gl_start = time()
-            nproc = np.min([param.shell.N_cpu,len(h['Mvir'])])
-            print('number of processes:',nproc)
-            idx = np.arange(len(h['Mvir']))
-            procs = []
-            for process in range(nproc):
-                args = self, process, idx[process::nproc], task, args_for_loop_halo_chunks, return_dict_DpBAR, return_dict_DpFDM
-                globals()['p'+str(process)] = multiprocessing.Process(target=worker_method, args=(args,))
-                print('starting process ',process,eval('p'+str(process)))
-                eval('p'+str(process)).start()
-                procs.append(eval('p'+str(process)))
-
-            for process in range(nproc):
-                print('joining process:',process)
-                eval('p'+str(process)).join()
-                print(eval('p'+str(process)))
-
-            gl_end = time()
-            print('Global time for current shell:', gl_end - gl_start, 'concatenating outputs')
-            print(return_dict_DpBAR,return_dict_DpFDM)
-            
-            print('Loading displacements from all processes')
-            print("Summing displacements...")
-            DpBAR = self.sum_structured_arrays_from_files(return_dict_DpBAR)
-            DpFDM = self.sum_structured_arrays_from_files(return_dict_DpFDM)
-
-            
-        gc.collect()
-
-        t = time()
-        #Displace particles and separarte BAR into HGA, CGA, SGA
-        DpBAR_c = arcdisplace(np.column_stack((DpBAR['x'], DpBAR['y'], DpBAR['z'])),
-                            np.column_stack((p_baryons['x'], p_baryons['y'], p_baryons['z'])),shell_cov,param)
-        p_baryons['x'] += DpBAR_c[:,0]
-        p_baryons['y'] += DpBAR_c[:,1]
-        p_baryons['z'] += DpBAR_c[:,2]
-
-        DpFDM_c = arcdisplace(np.column_stack((DpFDM['x'], DpFDM['y'], DpFDM['z'])),
-                            np.column_stack((p_darkmatter['x'], p_darkmatter['y'], p_darkmatter['z'])),shell_cov,param)
-        p_darkmatter['x'] += DpFDM_c[:,0]
-        p_darkmatter['y'] += DpFDM_c[:,1]
-        p_darkmatter['z'] += DpFDM_c[:,2]
-        del DpFDM_c, DpBAR_c
-        print(f"Time to displace particles: {time()-t} seconds")
-        t = time()
-        #convert position to healpix index and store the data
-        shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'])
-        shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None)
-        shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'])
-        print(f"Time to convert to healpix map: {time()-t} seconds")
-        return shell_id, shell_gas, shell_dm, shell_star
+        MFINAL_tck = splrep(rbin, MFINAL, s=0, k=3)
+        MFINALinv_tck = splrep(MFINAL, rbin, s=0, k=3)
+        rFINAL = splev(MINITIAL, MFINALinv_tck, der=0)
+        DFINAL = rFINAL - rbin
+        return DFINAL

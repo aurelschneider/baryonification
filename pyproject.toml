@@ -18,6 +18,7 @@ dependencies = [
     "h5py",
     "healpy",
     "tqdm",
+    "cosmic-toolbox",
     ]
 
 [project.optional-dependencies]
