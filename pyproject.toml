@@ -19,6 +19,7 @@ dependencies = [
     "healpy",
     "tqdm",
     "cosmic-toolbox",
+    "requests",
     ]
 
 [project.optional-dependencies]

@@ -13,75 +13,22 @@ To download and install the package, type
     
 ## Quickstart
 
-The script below provides a minimal example to use the code:
-```python
-from __future__ import annotations
-import os, sys, math, pathlib, requests, subprocess
-from typing import Optional
-import baryonification as bfc
-
-# ----------------------------------------------------------------------
-# CONFIGURATION
-# ----------------------------------------------------------------------
-RECORD_ID = "17525781"  # your Zenodo_ID for required files
-CACHE_DIR = pathlib.Path(RECORD_ID).resolve()
-
-BOX_FILE  = CACHE_DIR / "results.00100"                   # simulation name on Zenodo (DO NOT CHANGE)
-HALO_FILE = CACHE_DIR / "AHF_halos.00100.0000.z0.000.AHF_halos"      # Halofile name on Zenodo (DO NOT CHANGE)
-PATH = 'path to zenodo_dl.py file'
-
-# ----------------------------------------------------------------------
-# 1. Ensure data exist (run zenodo_dl.py if missing)
-# ----------------------------------------------------------------------
-if not BOX_FILE.exists() or not HALO_FILE.exists():
-    print("\n🔹 Required data not found locally. Downloading from Zenodo...\n")
-    subprocess.run(["python", PATH+"zenodo_dl.py", RECORD_ID], check=True)
-else:
-    print("✅ All required data already downloaded.\n")
-
-#initialise parameters                                                                                                                                                                                                                                                                     
-par = bfc.par()
-
-#set paths to input-files
-par.files.transfct     = './baryonification/baryonification/files/CDM_PLANCK_tk.dat'
-par.files.partfile_in  = str(BOX_FILE)
-par.files.halofile_in  = str(HALO_FILE)
-
-#set path to output-file
-par.files.partfile_out = "BFC_CDM_L128_N256.00100"
-
-#modify model parameters (all default values listed in baryonification/params.py)
-par.baryon.Mc    = 1e13
-par.baryon.mu    = 0.5
-par.baryon.delta = 5.0
-
-#set simulation box and redshift
-par.sim.Lbox = 128
-par.cosmo.z = 0.0
-
-#Set number of chunks for paralleisation (N_chunk=i means 2^i chunks)
-par.sim.N_chunk = 1
-
-#baryonify
-part_displ = bfc.ParticleDisplacer(par)
-part_displ.displace()
-```
-    
-All model parameters are defined in baryonification/params.py.
+The scripts below provide minimal examples to use the code (scripts can also be found in `examples` folder). The default values of all the model parameters are defined in `baryonification/params.py`. 
 
 Analytical profiles can be obtained directly without the need to baryonify. Here is a minimal example:
-
 ```python
 import baryonification as bfc
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splrep, splev
 
+print('Set up the paths. Currently working directory is assumed to be "examples"')
+
 # initialise parameters                                                                            
 par = bfc.par()
 
 #set paths to input-files
-par.files.transfct     = "path_to_transfer_function/CDM_PLANCK_tk.dat"
+par.files.transfct     = '../baryonification/files/CDM_PLANCK_tk.dat'
 
 #radial bins
 rbin = np.logspace(np.log10(0.005),np.log10(50),100,base=10)
@@ -114,6 +61,117 @@ plt.xlabel('r [cMpc/h]')
 plt.ylabel('density [h^2 Msun/cMpc^3]')
 plt.legend()
 plt.show()
+```
+
+Example to baryonify the dark matter-only simulation snapshot (data necessary for this example will be downloaded automatically, ~2.6G):
+
+```python
+from __future__ import annotations
+import pathlib, subprocess
+import baryonification as bfc
+
+print('Set up the paths. Currently working directory is assumed to be "examples"')
+
+# ----------------------------------------------------------------------
+# CONFIGURATION
+# ----------------------------------------------------------------------
+RECORD_ID = "17660327"  # your Zenodo_ID for required files
+CACHE_DIR = pathlib.Path(RECORD_ID).resolve()
+
+BOX_FILE  = CACHE_DIR / "results.00100"                   # simulation name on Zenodo (DO NOT CHANGE)
+HALO_FILE = CACHE_DIR / "AHF_halos.00100.0000.z0.000.AHF_halos"      # Halofile name on Zenodo (DO NOT CHANGE)
+PATH = './'
+PATH_tk = '../baryonification/files/CDM_PLANCK_tk.dat'
+# ----------------------------------------------------------------------
+# 1. Ensure data exist (run zenodo_dl.py if missing)
+# ----------------------------------------------------------------------
+if not BOX_FILE.exists() or not HALO_FILE.exists():
+    print("\n🔹 Required data not found locally. Downloading from Zenodo...\n")
+    subprocess.run(["python", PATH+"zenodo_dl.py", RECORD_ID], check=True)
+else:
+    print("✅ All required data already downloaded.\n")
+
+#initialise parameters                                                                                                                                                                                                                                                                     
+par = bfc.par()
+
+#set paths to input-files
+par.files.transfct     = PATH_tk
+par.files.partfile_in  = str(BOX_FILE)
+par.files.halofile_in  = str(HALO_FILE)
+
+#set path to output-file
+par.files.partfile_out = "BFC_CDM_L128_N256.00100"
+
+#modify model parameters (all default values listed in baryonification/params.py)
+par.baryon.Mc    = 1e13
+par.baryon.mu    = 0.5
+par.baryon.delta = 5.0
+
+#set simulation box and redshift
+par.sim.Lbox = 128
+par.cosmo.z = 0.0
+
+#Set number of chunks for parallelisation (N_chunk=i means i^3 divisions of the box = number of CPUs requested)
+par.sim.N_chunk = 1
+
+#baryonify
+part_displ = bfc.ParticleDisplacer(par)
+part_displ.displace()
+```
+
+And finally, the example to perform the baryonification at the level of lightcone dark matter density shells (data necessary for this example will be downloaded automatically, ~2.6G):
+```python
+from __future__ import annotations
+import pathlib, subprocess
+import baryonification as bfc
+
+print('Set up the paths. Currently working directory is assumed to be "examples"')
+
+# ----------------------------------------------------------------------
+# CONFIGURATION
+# ----------------------------------------------------------------------
+RECORD_ID = "17660327"  # your Zenodo_ID for required files
+CACHE_DIR = pathlib.Path(RECORD_ID).resolve()
+
+BOX_FILE  = CACHE_DIR / "results.00100"                   # simulation name on Zenodo (DO NOT CHANGE)
+HALO_FILE = CACHE_DIR / "AHF_halos.00100.0000.z0.000.AHF_halos"      # Halofile name on Zenodo (DO NOT CHANGE)
+PATH = './'
+PATH_tk = '../baryonification/files/CDM_PLANCK_tk.dat'
+# ----------------------------------------------------------------------
+# 1. Ensure data exist (run zenodo_dl.py if missing)
+# ----------------------------------------------------------------------
+if not BOX_FILE.exists() or not HALO_FILE.exists():
+    print("\n🔹 Required data not found locally. Downloading from Zenodo...\n")
+    subprocess.run(["python", PATH+"zenodo_dl.py", RECORD_ID], check=True)
+else:
+    print("✅ All required data already downloaded.\n")
+
+#initialise parameters                                                                                                                                                                                                                                                                     
+par = bfc.par()
+
+#set paths to input-files
+par.files.transfct     = PATH_tk
+par.files.partfile_in  = str(BOX_FILE)
+par.files.halofile_in  = str(HALO_FILE)
+
+#set path to output-file
+par.files.partfile_out = "BFC_CDM_L128_N256.00100"
+
+#modify model parameters (all default values listed in baryonification/params.py)
+par.baryon.Mc    = 1e13
+par.baryon.mu    = 0.5
+par.baryon.delta = 5.0
+
+#set simulation box and redshift
+par.sim.Lbox = 128
+par.cosmo.z = 0.0
+
+#Set number of chunks for parallelisation (N_chunk=i means i^3 divisions of the box = number of CPUs requested)
+par.sim.N_chunk = 1
+
+#baryonify
+part_displ = bfc.ParticleDisplacer(par)
+part_displ.displace()
 ```
 
     

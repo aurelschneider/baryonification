@@ -185,8 +185,8 @@ class ParticleDisplacer:
 
             #Loop over haloes, calculate displacement, and displace partricles
             
-            # for i in range(len(h_chunk['Mvir'])):
-            for i in tqdm(idx_local):
+            for i in range(len(h_chunk['Mvir'])):
+            # for i in tqdm(idx_local):
                 #select host haloes (subhaloes >= 1)
                 if (h_chunk['IDhost'][i] < 0):
                     

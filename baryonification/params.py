@@ -83,7 +83,7 @@ def io_files():
         "shellfile_format": 'CosmoGrid_nersc',   # format of the input lightcone shell
         "shellfile_in": 'shell_in.npz',          # input lightcone shell file
         "shellfile_out": 'shell_out.h5',         # output lightcone shell file
-        "output_pixelparticle_file": True,       # output file for pixel particles
+        "output_pixelparticle_file": False,       # output file for pixel particles
         "tmp_files": './tmp',                    # directory to store temporary files (they can be large!)
     }
     return Bunch(par)
