@@ -2,6 +2,7 @@ import os
 import healpy as hp
 import numpy as np
 from time import time
+# Force tqdm to use threading-based locks (no semaphores)
 from tqdm import tqdm
 import schwimmbad
 from scipy.integrate import cumulative_trapezoid
@@ -50,7 +51,8 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
     t0 = time()
     local_list = []
 
-    for pix in pix_subset:
+    n_pix_subset = len(pix_subset)
+    for pix in maybe_progressbar(pix_subset ,total = n_pix_subset, desc = f"Process {pid}: Loop over pixel subset"):
         pix_mass = pixels[pix]
 
         if halo_map[pix]:
@@ -218,7 +220,7 @@ def subsample_pixels(nside, pixels, shell_r, halos, param):
     with schwimmbad.MultiPool(processes=nproc) as pool:
         results = list(pool.starmap(loop_cpus_subsample_particles, iterable_args))
 
-    LOGGER.info(f"......Subsampling with {nproc} processes done. Ellapsed time {time()-t_global:.2f}s")
+    LOGGER.info(f"......Subsampling with {nproc} processes done. Ellapsed time {time()-t_global:.2f} seconds")
 
     # results = [(pid, filename), ...]
     results = sorted(results, key=lambda x: x[0])
@@ -432,3 +434,9 @@ def get_healpix_map_gaussian(p, param, star_fraction=None):
 
         final_map += hp.ud_grade(this_map, nside_out=nside_out, power=-2)
     return final_map.astype(np.float16)
+
+def maybe_progressbar(iterable, total, desc):
+    level = os.getenv("PYTHON_LOGGER_LEVEL", "info")
+    if level == "debug":
+        return LOGGER.progressbar(iterable, total=total, desc=desc, at_level="debug")
+    return iterable

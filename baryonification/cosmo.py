@@ -136,7 +136,7 @@ class CosmoCalculator:
         
         integral_result, _ = quad(integrand, np.log(self.kmin), np.log(self.kmax), epsrel=5e-3, limit=100)
         A_NORM = 2.0 * np.pi**2 * self.s8**2 / integral_result
-        print('Normalizing power-spectrum done!')
+        # print('Normalizing power-spectrum done!')
 
         bin_N = 100
         bin_r = np.logspace(np.log(self.rmin), np.log(self.rmax), bin_N, base=np.e)

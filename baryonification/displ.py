@@ -5,8 +5,9 @@ from scipy.interpolate import splrep,splev
 
 import schwimmbad
 
-import gc
+# Force tqdm to use threading-based locks (no semaphores)
 from tqdm import tqdm
+import gc
 from time import time
 from cosmic_toolbox import logger
 
@@ -715,7 +716,7 @@ class ShellDisplacer:
             
             results.append(result)
             t2 = time()
-            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes} done ✅. Ellapsed time: {t2 - t1:.3f} seconds.\n")
+            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes} done ✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
 
         particle_shell = {i: p for i, p in results}
         return [particle_shell[i] for i in sorted(particle_shell.keys())]
@@ -742,7 +743,7 @@ class ShellDisplacer:
             dmdata[i_shell] = result[2]
             stardata[i_shell] = result[3]
             t2 = time()
-            LOGGER.info(f"......Shell {i_proc+1}/{num_processes} done. Ellapsed time: {t2 - t1:.3f} seconds.")
+            LOGGER.info(f"......Shell {i_proc+1}/{num_processes} done. Ellapsed time: {t2 - t1:.3f} seconds")
         LOGGER.info(f"Displacing shells done ✅\n")
         return gasdata, dmdata, stardata
 
@@ -814,7 +815,7 @@ class ShellDisplacer:
         LOGGER.debug(f"......Summing displacements...")
         DpBAR = self.sum_structured_arrays_from_files(dpbar_parts)
         DpFDM = self.sum_structured_arrays_from_files(dpfdm_parts)
-        LOGGER.debug(f"......Summing displacements done.")
+        LOGGER.debug(f"......Summing displacements done")
 
         gc.collect()
 
@@ -833,14 +834,14 @@ class ShellDisplacer:
         p_darkmatter['y'] += DpFDM_c[:,1]
         p_darkmatter['z'] += DpFDM_c[:,2]
         del DpFDM_c, DpBAR_c
-        LOGGER.info(f"......Applying displacements around halos done. Ellapsed time: {time()-t:.3f} seconds.")
+        LOGGER.info(f"......Applying displacements around halos done. Ellapsed time: {time()-t:.3f} seconds")
         t = time()
         #convert position to healpix index and store the data
         LOGGER.info(f"......Converting particles to healpix maps...")
         shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'])
         shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None)
         shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'])
-        LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds.")
+        LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds")
         return shell_id, shell_gas, shell_dm, shell_star
 
     def loop_halo_chunks(self, i_cpu, idx_local, task, args_for_loop_halo_chunks):
@@ -857,9 +858,8 @@ class ShellDisplacer:
         DpBAR = np.zeros(n_p,dtype=Dp_type)
         DpFDM = np.zeros(n_p,dtype=Dp_type)
         
-        
-        # for j in tqdm(idx_local, desc=f"CPU {i_cpu} processing halos", position=i_cpu):
-        for j in idx_local:
+        n_halos_local = len(idx_local)
+        for j in maybe_progressbar(idx_local ,total = n_halos_local, desc = f"Process {i_cpu}: Loop over halo subset"):
             
             #select host haloes (subhaloes >= 1)
             if (h['IDhost'][j] < 0):
