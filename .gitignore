@@ -212,7 +212,7 @@ __marimo__/
 
 # ignore heavy files created by examples
 examples/BFC_CDM_L128_N256.00100
-examples/SHELL_BFC_cosmogrid_fiducial_run_0000_shell_4_5.h5
+examples/SHELL_BFC_cosmogrid_fiducial_run_0000*
 examples/tmp/
 examples/cosmofct.dat
 examples/17660327/
