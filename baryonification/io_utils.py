@@ -587,7 +587,7 @@ class IO_shell:
         LOGGER.info(f"Reading lightcone halo done ✅\n")
         return h_list, thickness_list, redshift_list
 
-    def write_shell_file(self,gas_shell,dm_shell,star_shell):
+    def write_shell_file_multicomp(self,gas_shell,dm_shell,star_shell):
         '''
         write output healpix file.
         '''
@@ -596,6 +596,16 @@ class IO_shell:
             save_dict_to_hdf5(f, 'dm', dm_shell)
             save_dict_to_hdf5(f, 'gas', gas_shell)
             save_dict_to_hdf5(f, 'star', star_shell)
-        LOGGER.info(f"Baryonified shells saved to {shell_file_out}")
+        LOGGER.info(f"Multi-component baryonified shells saved to {shell_file_out}")
+        return
+    
+    def write_shell_file_singlecomp(self,dmb_shell):
+        '''
+        write output healpix file.
+        '''
+        shell_file_out = self.param.files.shellfile_out
+        with h5py.File(shell_file_out, 'w') as f:
+            save_dict_to_hdf5(f, 'dmb', dmb_shell)
+        LOGGER.info(f"Single-component baryonified shells saved to {shell_file_out}")
         return
 
