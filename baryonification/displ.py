@@ -854,7 +854,7 @@ class ShellDisplacer:
         
         profiles = Profiles(None, 1e13, None, None, None, None, self.param)
         #Ready for computing the displacemnet
-        Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),("id",'>f4')])
+        Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),("id",'>f4'),("rho2D_star_at_xyz",'>f4'),("rho2D_bar_at_xyz",'>f4')]) #rho2D_star_at_xyz, rho2D_bar_at_xyz = analytical densities at position xyz
         DpBAR = np.zeros(n_p,dtype=Dp_type)
         DpFDM = np.zeros(n_p,dtype=Dp_type)
         
@@ -1003,57 +1003,93 @@ class ShellDisplacer:
                     proj_CGA = projection(frac['CGA']*(dens['CGA']), rbin, rvir, thickness, param, output='density', star=True)
                     proj_SGA = projection(frac['SGA']*(dens['SGA']), rbin, rvir, thickness, param, output='density', star=True)
                         
-                    probHGA = np.round(proj_HGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probIGA = np.round(proj_IGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probCGA = np.round(proj_CGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
-                    probSGA = np.round(proj_SGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                    #probHGA = np.round(proj_HGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                    #probIGA = np.round(proj_IGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                    #probCGA = np.round(proj_CGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
+                    #probSGA = np.round(proj_SGA/(proj_HGA + proj_IGA + proj_CGA + proj_SGA),8)
 
-                    #Only HGA outside of virial radius
-                    probHGA[np.where(rbin>=h['rvir'][j])] = 1.0
-                    probIGA[np.where(rbin>=h['rvir'][j])] = 0.0
-                    probCGA[np.where(rbin>=h['rvir'][j])] = 0.0
-                    probSGA[np.where(rbin>=h['rvir'][j])] = 0.0
+                    ##Only HGA outside of virial radius
+                    #probHGA[np.where(rbin>=h['rvir'][j])] = 1.0
+                    #probIGA[np.where(rbin>=h['rvir'][j])] = 0.0
+                    #probCGA[np.where(rbin>=h['rvir'][j])] = 0.0
+                    #probSGA[np.where(rbin>=h['rvir'][j])] = 0.0
 
-                    probHGA_tck = splrep(rbin, probHGA, s=0, k=1)
-                    probIGA_tck = splrep(rbin, probIGA, s=0, k=1)
-                    probCGA_tck = splrep(rbin, probCGA, s=0, k=1)
-                    probSGA_tck = splrep(rbin, probSGA, s=0, k=1)
+                    #probHGA_tck = splrep(rbin, probHGA, s=0, k=1)
+                    #probIGA_tck = splrep(rbin, probIGA, s=0, k=1)
+                    #probCGA_tck = splrep(rbin, probCGA, s=0, k=1)
+                    #probSGA_tck = splrep(rbin, probSGA, s=0, k=1)
 
 
                     #calculate the probabilities per particle
+                    #if param.shell.nbrhalo == 1:
+                    #    if(len(rpBAR_nbrhaloes)>0):
+                    #        rpBAR_wo_nbrhaloes_displ = rpBAR_wo_nbrhaloes + DrpBAR_wo_nbrhaloes
+                    #        pHGA = splev(rpBAR_wo_nbrhaloes_displ, probHGA_tck,der=0,ext=3)
+                    #        pIGA = splev(rpBAR_wo_nbrhaloes_displ, probIGA_tck,der=0,ext=3)
+                    #        pCGA = splev(rpBAR_wo_nbrhaloes_displ, probCGA_tck,der=0,ext=3)
+                    #        pSGA = splev(rpBAR_wo_nbrhaloes_displ, probSGA_tck,der=0,ext=3)
+                    #    else:
+                    #        rpBAR_displ = rpBAR + DrpBAR
+                    #        pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
+                    #        pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
+                    #        pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
+                    #        pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
+                            
+                    #elif param.shell.nbrhalo == 0:
+                    #    rpBAR_displ = rpBAR + DrpBAR
+                    #    pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
+                    #    pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
+                    #    pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
+                    #    pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
+
+                    #make sure no stars are outside virial radius
+                    proj_CGA[np.where(rbin>=h['rvir'][j])] = 0.0 
+                    proj_SGA[np.where(rbin>=h['rvir'][j])] = 0.0 
+
+                    #interpolate projected densities
+                    rho2D_HGA_tck = splrep(rbin, proj_HGA, s=0, k=1)
+                    rho2D_IGA_tck = splrep(rbin, proj_IGA, s=0, k=1)
+                    rho2D_CGA_tck = splrep(rbin, proj_CGA, s=0, k=1)
+                    rho2D_SGA_tck = splrep(rbin, proj_SGA, s=0, k=1)
+
                     if param.shell.nbrhalo == 1:
                         if(len(rpBAR_nbrhaloes)>0):
                             rpBAR_wo_nbrhaloes_displ = rpBAR_wo_nbrhaloes + DrpBAR_wo_nbrhaloes
-                            pHGA = splev(rpBAR_wo_nbrhaloes_displ, probHGA_tck,der=0,ext=3)
-                            pIGA = splev(rpBAR_wo_nbrhaloes_displ, probIGA_tck,der=0,ext=3)
-                            pCGA = splev(rpBAR_wo_nbrhaloes_displ, probCGA_tck,der=0,ext=3)
-                            pSGA = splev(rpBAR_wo_nbrhaloes_displ, probSGA_tck,der=0,ext=3)
+                            rho2D_HGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_HGA_tck,der=0,ext=3)
+                            rho2D_IGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_IGA_tck,der=0,ext=3)
+                            rho2D_CGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_CGA_tck,der=0,ext=3)
+                            rho2D_SGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_SGA_tck,der=0,ext=3)
                         else:
                             rpBAR_displ = rpBAR + DrpBAR
-                            pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
-                            pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
-                            pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
-                            pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
+                            rho2D_HGA = splev(rpBAR_displ, rho2D_HGA_tck,der=0,ext=3)
+                            rho2D_IGA = splev(rpBAR_displ, rho2D_IGA_tck,der=0,ext=3)
+                            rho2D_CGA = splev(rpBAR_displ, rho2D_CGA_tck,der=0,ext=3)
+                            rho2D_SGA = splev(rpBAR_displ, rho2D_SGA_tck,der=0,ext=3)
                             
                     elif param.shell.nbrhalo == 0:
                         rpBAR_displ = rpBAR + DrpBAR
-                        pHGA = splev(rpBAR_displ, probHGA_tck,der=0,ext=3)
-                        pIGA = splev(rpBAR_displ, probIGA_tck,der=0,ext=3)
-                        pCGA = splev(rpBAR_displ, probCGA_tck,der=0,ext=3)
-                        pSGA = splev(rpBAR_displ, probSGA_tck,der=0,ext=3)
-
+                        rho2D_HGA = splev(rpBAR_displ, rho2D_HGA_tck,der=0,ext=3)
+                        rho2D_IGA = splev(rpBAR_displ, rho2D_IGA_tck,der=0,ext=3)
+                        rho2D_CGA = splev(rpBAR_displ, rho2D_CGA_tck,der=0,ext=3)
+                        rho2D_SGA = splev(rpBAR_displ, rho2D_SGA_tck,der=0,ext=3)
+                    
                     #we record how likely particles in this healpix is a star with a float id
                     #id=0.0 for full gas, id=1.0 for full star
-                    prob_star = pCGA + pSGA
+                    rho2D_star = rho2D_CGA + rho2D_SGA
+                    rho2D_bar  = rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA
+
                     if param.shell.nbrhalo==1:
                         if (len(rpBAR_nbrhaloes) > 0):
-                            DpBAR['id'][ipbool_wo_nbrhaloes] = prob_star
+                            DpBAR['rho2D_star_at_xyz'][ipbool_wo_nbrhaloes] = rho2D_star
+                            DpBAR['rho2D_bar_at_xyz'][ipbool_wo_nbrhaloes]  = rho2D_bar
                         else:
-                            DpBAR['id'][ipbool] += prob_star
-                            DpBAR['id'][ipbool] = np.clip(DpBAR['id'][ipbool], a_min=0.0, a_max=1.0)
+                            DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
+                            DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
+                            #DpBAR['rho2D_bar_at_xyz'][ipbool] = np.clip(DpBAR['rho2D_bar_at_xyz'][ipbool], a_min=0.0, a_max=1.0)
                     elif param.shell.nbrhalo == 0:
-                        DpBAR['id'][ipbool] += prob_star
-                        DpBAR['id'][ipbool] = np.clip(DpBAR['id'][ipbool], a_min=0.0, a_max=1.0)
+                        DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
+                        DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
+                        #DpBAR['rho2D_bar_at_xyz'][ipbool] = np.clip(DpBAR['rho2D_bar_at_xyz'][ipbool], a_min=0.0, a_max=1.0)
         # store displacements obtained from different CPUs to disk temporarily to be collected later
         output_dir = self.param.files.tmp_files
         filenameDpBAR = f'{output_dir}/DpBAR_shell_{shell_id}_cpu_{i_cpu}.npy'
@@ -1081,7 +1117,8 @@ class ShellDisplacer:
         out["x"] += first["x"]
         out["y"] += first["y"]
         out["z"] += first["z"]
-        out["id"] += first["id"]
+        out["rho2D_star_at_xyz"] += first["rho2D_star_at_xyz"]
+        out["rho2D_bar_at_xyz"]  += first["rho2D_bar_at_xyz"]
         del first
 
         # Loop through remaining files one by one
@@ -1090,8 +1127,14 @@ class ShellDisplacer:
             out["x"] += arr["x"]
             out["y"] += arr["y"]
             out["z"] += arr["z"]
-            out["id"] += arr["id"]
+            out["rho2D_star_at_xyz"] += arr["rho2D_star_at_xyz"]
+            out["rho2D_bar_at_xyz"]  += arr["rho2D_bar_at_xyz"]
             del arr
+
+        LOGGER.debug(f"minmax {np.min(out["rho2D_bar_at_xyz"])}, {np.max(out["rho2D_bar_at_xyz"])}")
+        #calculate stellar fraction for each pixelparticle
+        mask = (out["rho2D_bar_at_xyz"] != 0)
+        out["id"][mask] = out["rho2D_star_at_xyz"][mask]/out["rho2D_bar_at_xyz"][mask]
 
         for fn in filenames:
             os.remove(fn)
