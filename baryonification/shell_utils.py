@@ -290,7 +290,6 @@ def get_healpix_map(p, param, star_fraction=None):
     interp     = param.shell.interp
     x = p['x']; y = p['y']; z = p['z']
     masses = p['M'] * (1 - star_fraction) if star_fraction is not None else p['M']
-    print("test::::::",np.min(masses),np.max(masses))#,np.min((1 - star_fraction)),np.max((1 - star_fraction)))
     
     if not interp:
         # direct binning at final resolution: splitting order irrelevant
