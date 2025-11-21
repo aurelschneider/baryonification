@@ -683,7 +683,7 @@ class ShellDisplacer:
         if (self.param.code.multicomp == True):
             gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list)
             io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
-        if (self.param.code.multicomp == False):
+        elif (self.param.code.multicomp == False):
             dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list)
             io_shell.write_shell_file_singlecomp(dmb_shell)
         else:
