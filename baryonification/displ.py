@@ -1111,8 +1111,9 @@ class ShellDisplacer:
                         
                         #we record how likely particles in this healpix is a star with a float id
                         #id=0.0 for full gas, id=1.0 for full star
-                        rho2D_star = rho2D_CGA + rho2D_SGA
-                        rho2D_bar  = rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA
+                        imf_star   = impact_factor(h_cov, shell_cov, thickness, 1.0*rvir)
+                        rho2D_star = imf_star*(rho2D_CGA + rho2D_SGA)
+                        rho2D_bar  = imf_star*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
 
                         if param.shell.nbrhalo==1:
                             if (len(rpBAR_nbrhaloes) > 0):
