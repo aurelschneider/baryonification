@@ -353,8 +353,9 @@ class Profiles:
             r1 = self.rbin*fstep(self.rbin)
             MNFW1 = self.MNFWtr_fct(r1, tau)
 
-            func = lambda x: (x-1.0) - Q2*((MNFW1+splev(r1,M2h_tck,der=0,ext=0))/((fcdm+fsga+Q1*fcga+Q1*figa)*MNFW1 + (1-Q1)*(fcga*splev(x*r1,MCGA_tck,der=0,ext=0) + figa*splev(x*r1,MIGA_tck,der=0,ext=0)) + fhga*splev(x*r1,MHGA_tck,der=0,ext=0) + splev(x*r1,M2h_tck,der=0,ext=0)) - 1.0)
-
+            #func = lambda x: (x-1.0) - Q2*((MNFW1+splev(r1,M2h_tck,der=0,ext=0))/((fcdm+fsga+Q1*fcga+Q1*figa)*MNFW1 + (1-Q1)*(fcga*splev(x*r1,MCGA_tck,der=0,ext=0) + figa*splev(x*r1,MIGA_tck,der=0,ext=0)) + fhga*splev(x*r1,MHGA_tck,der=0,ext=0) + splev(x*r1,M2h_tck,der=0,ext=0)) - 1.0)
+            func = lambda x: x - ((MNFW1+splev(r1,M2h_tck,der=0,ext=0))/((fcdm+fsga+Q1*fcga+Q1*figa)*MNFW1 + (1-Q1)*(fcga*splev(x*r1,MCGA_tck,der=0,ext=0) + figa*splev(x*r1,MIGA_tck,der=0,ext=0)) + fhga*splev(x*r1,MHGA_tck,der=0,ext=0) + splev(x*r1,M2h_tck,der=0,ext=0)))
+            
             if (isinstance(self.rbin, float)):
                 xi = 1.0
             else:
