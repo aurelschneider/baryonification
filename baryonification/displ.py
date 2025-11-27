@@ -973,7 +973,8 @@ class ShellDisplacer:
                     DBAR = self.displ(rbin, projected_MBAR_i, projected_MBAR_f)
                     DFDM = self.displ(rbin, projected_MDM_i, projected_MDM_f)
                     # print(DBAR, DFDM)
-                    imf = impact_factor(h_cov, shell_cov, thickness, 4*rvir)
+                    r_boundary = self.param.shell.boundary_factor * rvir
+                    imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
                     DBAR *= imf
                     DFDM *= imf
                     # print(DBAR, DFDM,imf)   
@@ -1181,7 +1182,8 @@ class ShellDisplacer:
                     #displacement functions
                     DDMB = self.displ(rbin, projected_MDM_i, projected_MDM_f)
                     # print(DDMB)
-                    imf = impact_factor(h_cov, shell_cov, thickness, 4*rvir)
+                    r_boundary = self.param.shell.boundary_factor * rvir
+                    imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
                     DDMB *= imf
                     # print(DDMB,imf)   
                     DDMB_tck = splrep(rbin, DDMB,s=0,k=3)

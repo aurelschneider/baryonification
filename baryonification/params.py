@@ -116,18 +116,6 @@ def code_par():
         "Mhalo_min": 2.5e11,     # Minimum halo mass [Msun/h]
         "disp_trunc": 0.01,      # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
         "halo_excl": 0.4,        # Halo exclusion parameter (no exclusion = large number e.g. 1000)
-
-        # added for shell baryonification
-        "nbrhalo": 0,            # 0: no neighboring halo treatment
-                                 # 1: displace gas in neighboring halo using dm displacement function
-        "max_shell": 1,          # Largest shell id to be displaced
-        "min_shell": 0,          # Smallest shell id to be displaced
-        "nside": 2048,           # Resolution of the input shell
-        "nside_out": 512,        # Resolution of the output shell
-        "mesh_ref": 1,           # 0: no mesh refinement
-                                 # 1: apply mesh refinement near halo centers, weighted using projected NFW profile
-        "interp": True,          # Apply linear interpolation when collecting displaced particles back to map
-        "curv_radius":400,       # Radius under which curvature correction is applied
         }
     return Bunch(par)
 
@@ -151,6 +139,7 @@ def shell_par():
                                  # 1: apply mesh refinement near halo centers, weighted using projected NFW profile
         "interp": True,          # Apply linear interpolation when collecting displaced particles back to map
         "curv_radius": 400,      # Radius under which curvature correction is applied
+        "boundary_factor": 4.0,  # range for interpolation at shell boundary (as a function of rvir)
         "N_cpu": 1,              # Number of CPU to use in multiprocessing
         }
     return Bunch(par)
