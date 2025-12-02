@@ -1265,7 +1265,7 @@ class ShellDisplacer:
             out["rho2D_bar_at_xyz"]  += arr["rho2D_bar_at_xyz"]
             del arr
 
-        LOGGER.debug(f"minmax {np.min(out["rho2D_bar_at_xyz"])}, {np.max(out["rho2D_bar_at_xyz"])}")
+        LOGGER.debug(f"minmax {np.min(out['rho2D_bar_at_xyz'])}, {np.max(out['rho2D_bar_at_xyz'])}")
         #calculate stellar fraction for each pixelparticle
         mask = (out["rho2D_bar_at_xyz"] != 0)
         out["id"][mask] = out["rho2D_star_at_xyz"][mask]/out["rho2D_bar_at_xyz"][mask]
