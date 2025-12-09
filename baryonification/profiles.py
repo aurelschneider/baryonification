@@ -168,8 +168,8 @@ class Profiles:
         rmin = 0.005 #Mpc/h
         uIGA[self.rbin<rmin] = 1.0
         return uIGA
-        #return np.exp(-w)/self.rbin**3.0
-    
+
+
     def uCGA_fct(self):
         """
         Normalised density profile of central galaxy

@@ -973,10 +973,26 @@ class ShellDisplacer:
                     DBAR = self.displ(rbin, projected_MBAR_i, projected_MBAR_f)
                     DFDM = self.displ(rbin, projected_MDM_i, projected_MDM_f)
                     # print(DBAR, DFDM)
-                    r_boundary = self.param.shell.boundary_factor * rvir
-                    imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
-                    DBAR *= imf
-                    DFDM *= imf
+
+                    #r_boundary = self.param.shell.boundary_factor * rvir
+                    #imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
+
+                    #DBAR *= imf
+                    #DFDM *= imf
+
+                    #V_overlap_ov_tot = relative volume (as a function of rbin)
+                    V_overlap_ov_tot = impact_factor(rbin, h_cov, shell_cov, thickness)
+
+                    #correction = [int dr r^2 V_rel(r) rho(r)]/[int dr r^2 rho(r)]
+                    rhoCDM = dens['CDM']
+                    rhoBAR = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
+                    corrFDM = np.trapz(rbin**2 * V_overlap_ov_tot * rhoCDM, rbin)/np.trapz(rbin**2 * rhoCDM, rbin)
+                    corrBAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoBAR, rbin)/np.trapz(rbin**2 * rhoBAR, rbin)
+                    #print(V_overlap_ov_tot, corrBAR)
+                    DBAR *= corrBAR
+                    DFDM *= corrFDM
+                    
+
                     # print(DBAR, DFDM,imf)   
                     DBAR_tck = splrep(rbin, DBAR,s=0,k=3)
                     DFDM_tck = splrep(rbin, DFDM,s=0,k=3)
@@ -1112,9 +1128,17 @@ class ShellDisplacer:
                         
                         #we record how likely particles in this healpix is a star with a float id
                         #id=0.0 for full gas, id=1.0 for full star
-                        imf_star   = impact_factor(h_cov, shell_cov, thickness, 1.0*rvir)
-                        rho2D_star = imf_star*(rho2D_CGA + rho2D_SGA)
-                        rho2D_bar  = imf_star*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
+                        #imf_star   = impact_factor(h_cov, shell_cov, thickness, 1.0*rvir)
+                        #rho2D_star = imf_star*(rho2D_CGA + rho2D_SGA)
+                        #rho2D_bar  = imf_star*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
+                        
+                        V_overlap_ov_tot   = impact_factor(rbin, h_cov, shell_cov, thickness)
+                        rhoSTAR = frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
+                        corrSTAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoSTAR, rbin)/np.trapz(rbin**2 * rhoSTAR, rbin)
+
+                        rho2D_star = corrSTAR*(rho2D_CGA + rho2D_SGA)
+                        rho2D_bar  = corrSTAR*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
+
 
                         if param.shell.nbrhalo==1:
                             if (len(rpBAR_nbrhaloes) > 0):

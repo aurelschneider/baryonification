@@ -50,7 +50,6 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
 
     t0 = time()
     local_list = []
-
     n_pix_subset = len(pix_subset)
     for pix in maybe_progressbar(pix_subset ,total = n_pix_subset, desc = f"Process {pid}: Loop over pixel subset"):
         pix_mass = pixels[pix]
@@ -358,7 +357,7 @@ def projection(rho,rbin,rvir,thickness,param, output='mass', star=False):
 
     return projected_Mass
 
-
+'''
 def sphere_intersection_volume(r1, r2, d):
 
     if d >= r1 + r2:
@@ -387,6 +386,48 @@ def impact_factor(h_cov, shell_cov, thickness, rball):
     V_overlap = max(0.0, V_overlap) 
 
     return V_overlap / V_halo
+'''
+
+def sphere_intersection_volume(r1, r2, d):
+
+    #deal with overlaps
+    h1 = (r1 - (d**2 - r2**2 + r1**2) / (2.0 * d))
+    h2 = (r2 - (d**2 - r1**2 + r2**2) / (2.0 * d))
+    Vcap1 = (1.0/3.0) * np.pi * h1**2 * (3*r1 - h1)
+    Vcap2 = (1.0/3.0) * np.pi * h2**2 * (3*r2 - h2)
+
+    Vexcl = Vcap1 + Vcap2
+
+    #deal with case where there is no overlap
+    Vexcl[d>=(r1 + r2)] = 0
+    Vexcl[d<=abs(r1 - r2)] = (4.0/3.0) * np.pi * r2[d<=abs(r1 - r2)]**3
+
+    return Vexcl
+
+
+def impact_factor(rbin, h_cov, shell_cov, thickness):
+
+    r_in = shell_cov - thickness / 2
+    r_out = shell_cov + thickness / 2
+    r_in = max(r_in, 0.0)
+    
+    #V_halo = (4/3) * np.pi * rball**3
+    #V_halo = (4/3) * np.pi * rbin[-1]**3
+    V_halo = (4/3) * np.pi * rbin**3
+
+    #array of r between 0 and rball 
+    V_outer = sphere_intersection_volume(r_out, rbin, h_cov)
+    V_inner = sphere_intersection_volume(r_in, rbin, h_cov)
+    V_overlap = V_outer - V_inner
+    
+    #V_overlap = max(0.0, V_overlap)
+    V_overlap[V_overlap<0] = 0 
+
+    impact_fac = V_overlap / V_halo
+    #impact_fac[impact_fac<0] = 0
+
+    return impact_fac
+
 
 #The following functions are under testing:
 
