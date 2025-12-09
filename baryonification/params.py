@@ -139,7 +139,6 @@ def shell_par():
                                  # 1: apply mesh refinement near halo centers, weighted using projected NFW profile
         "interp": True,          # Apply linear interpolation when collecting displaced particles back to map
         "curv_radius": 400,      # Radius under which curvature correction is applied
-        "boundary_factor": 4.0,  # range for interpolation at shell boundary (as a function of rvir)
         "N_cpu": 1,              # Number of CPU to use in multiprocessing
         }
     return Bunch(par)
