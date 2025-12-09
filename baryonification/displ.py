@@ -1205,15 +1205,22 @@ class ShellDisplacer:
 
                     #displacement functions
                     DDMB = self.displ(rbin, projected_MDM_i, projected_MDM_f)
-                    # print(DDMB)
-                    r_boundary = self.param.shell.boundary_factor * rvir
-                    imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
-                    DDMB *= imf
-                    # print(DDMB,imf)   
+                    
+                    #r_boundary = self.param.shell.boundary_factor * rvir
+                    #imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
+                    #DDMB *= imf
+                    
+                    #V_overlap_ov_tot = relative volume (as a function of rbin)
+                    V_overlap_ov_tot = impact_factor(rbin, h_cov, shell_cov, thickness)
+
+                    #correction = [int dr r^2 V_rel(r) rho(r)]/[int dr r^2 rho(r)]
+                    rhoDMB = dens['DMB']
+                    corrDMB = np.trapz(rbin**2 * V_overlap_ov_tot * rhoDMB, rbin)/np.trapz(rbin**2 * rhoDMB, rbin)
+                    DDMB *= corrDMB
+
                     DDMB_tck = splrep(rbin, DDMB,s=0,k=3)
                         
                     smallestD = param.code.disp_trunc #Mpc/h
-                    # print(DBAR, DFDM, smallestD)   
                     #array of idx with DBAR > Dsmallest
 
                     #array of idx with DDMB > Dsmallest
