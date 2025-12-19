@@ -56,13 +56,14 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
 
         if halo_map[pix]:
             halos_in_pixel = halo_pixels_dict.get(pix, [])
-            sub_nside = 4 * nside
+            Ngrandchildren_per_dim = 4
+            sub_nside = Ngrandchildren_per_dim * nside
             idx_n = hp.ring2nest(nside, pix)
-            grandchildren = hp.nest2ring(sub_nside, idx_n * 16 + np.arange(16))
+            grandchildren = hp.nest2ring(sub_nside, idx_n * Ngrandchildren_per_dim**2 + np.arange(Ngrandchildren_per_dim**2))
             dirs = np.array(hp.pix2vec(sub_nside, grandchildren, nest=False)).T
             sub_positions = dirs * shell_r
 
-            mass_weights = np.ones(16)
+            mass_weights = np.ones(Ngrandchildren_per_dim**2)
             if halos_in_pixel:
                 for halo_idx in halos_in_pixel:
                     halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
@@ -72,19 +73,20 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
                     mass_weights += assign_weight(dists, rvir)
                 mass_weights /= np.sum(mass_weights)
 
-            for j in range(16):
+            for j in range(Ngrandchildren_per_dim**2):
                 mass = pix_mass * mass_weights[j]
                 local_list.append((pix, sub_positions[j], mass, 2))
 
         elif neighbor_map[pix]:
             adjacent_halos = adjacent_halos_dict.get(pix, [])
-            sub_nside = 2 * nside
+            Nchildren_per_dim = 2
+            sub_nside = Nchildren_per_dim * nside
             idx_n = hp.ring2nest(nside, pix)
-            children = hp.nest2ring(sub_nside, idx_n * 4 + np.arange(4))
+            children = hp.nest2ring(sub_nside, idx_n * Nchildren_per_dim**2 + np.arange(Nchildren_per_dim**2))
             dirs = np.array(hp.pix2vec(sub_nside, children, nest=False)).T
             sub_positions = dirs * shell_r
 
-            mass_weights = np.ones(4)
+            mass_weights = np.ones(Nchildren_per_dim**2)
             if adjacent_halos:
                 for halo_idx in adjacent_halos:
                     halo_pos = np.array([h['x'][halo_idx], h['y'][halo_idx], h['z'][halo_idx]])
@@ -92,7 +94,7 @@ def loop_cpus_subsample_particles(pid, pix_subset, pixels, nside, shell_r, halo_
                     mass_weights += assign_weight(dists, h['rvir'][halo_idx])
                 mass_weights /= np.sum(mass_weights)
 
-            for j in range(4):
+            for j in range(Nchildren_per_dim**2):
                 mass = pix_mass * mass_weights[j]
                 local_list.append((pix, sub_positions[j], mass, 1))
 
