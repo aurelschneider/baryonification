@@ -472,7 +472,7 @@ class IO_shell:
         LOGGER.info(f"Reading healpix shells done ✅\n")
         return shell_id, map_list
 
-    def read_halo_lc_file(self,output_shell_info = False):
+    def read_halo_lc_file(self,output_shell_info = False, scale_facotr=False):
         """
         Read in halo lightcone
         """
@@ -529,6 +529,10 @@ class IO_shell:
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
             # halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
+            if scale_facotr:
+                import pyccl as ccl
+                cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
+                                      h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
             
             for i in shell_id:
                 self.param.cosmo.z = redshift[i]
@@ -548,12 +552,17 @@ class IO_shell:
                 select_concentrations = concentrations[mask_buffer0]
                 select_IDs = IDs[mask_buffer0] 
                 select_halo = halos_pos[mask_buffer0] 
-                
-                
+
+
                 h = np.zeros(len(select_halo['x']),dtype=h_dt)
                 h['ID'] = select_IDs
                 # host halo status needs to be obtained from the old cosmogrid file
                 # select_halos_old = halos_cosmogrid_old['halos'][halos_cosmogrid_old['halos']['shell_id'] == i]
+
+                if scale_facotr:
+                    r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
+                    a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
+                    h = append_fields(h, 'scale_factor', a)
 
                 # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
                 h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
@@ -586,6 +595,10 @@ class IO_shell:
         
         LOGGER.info(f"Reading lightcone halo done ✅\n")
         return h_list, thickness_list, redshift_list
+    
+    def get_redshifts_from_halo_lc(self):
+        halo_lc_file = self.param.files.halolc_in
+        lchalo_file = h5py.File(halo_lc_file,'r')
 
     def write_shell_file_multicomp(self,gas_shell,dm_shell,star_shell):
         '''
