@@ -493,6 +493,11 @@ class IO_shell:
             #halo data
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
+
+            if scale_facotr:
+                import pyccl as ccl
+                cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
+                                      h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
             
             for i in shell_id:
                 self.param.cosmo.z = redshift[i]
@@ -501,6 +506,12 @@ class IO_shell:
                 h = np.zeros(len(select_halo['x']),dtype=h_dt)
                 h['ID'] = select_halo['ID']
                 h['IDhost'] = select_halo['IDhost']
+
+                if scale_facotr:
+                    r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
+                    a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
+                    h = append_fields(h, 'scale_factor', a)
+
                 # we project the halo coordinates
                 norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
                 h['cov'] = norm / 1000
