@@ -13,6 +13,7 @@ from cosmic_toolbox import logger
 from .constants import *
 from .profiles import *
 from .shell_utils import *
+from .cosmo import *
 
 LOGGER = logger.get_logger(__name__)
 
@@ -632,4 +633,58 @@ class IO_shell:
             save_dict_to_hdf5(f, 'dmb', dmb_shell)
         LOGGER.info(f"Single-component baryonified shells saved to {shell_file_out}")
         return
+    
+    def precompute_cosmo_grid(self, z_grid, out_h5, bin_N=100):
+        import h5py
+        # precompute cosmology grid for variance, bias, and correlation function (used in map generation)
+        # we assume par.code.rmin/rmax/kmin/kmax fixed, and transfer function file fixed
+        # ensure the CosmoCalculator uses the same bin_N each time
+        with h5py.File(out_h5, "w") as f:
+            f.create_dataset("z", data=np.asarray(z_grid))
 
+            # placeholders (we’ll fill after first run when we know grids)
+            r_grid = None
+            m_grid = None
+
+            var_all  = []
+            bias_all = []
+            corr_all = []
+
+            for z in z_grid:
+                self.param.cosmo.z = float(z)  # <-- important: update param redshift
+                cc = CosmoCalculator(self.param)
+                r, m, var, bias, corr = cc.compute_cosmology()
+
+                if r_grid is None:
+                    r_grid = r
+                    m_grid = m
+                else:
+                    # sanity check: grids must match across z
+                    if not (np.allclose(r_grid, r) and np.allclose(m_grid, m)):
+                        raise RuntimeError("r/m grids changed across redshift; keep binning fixed!")
+
+                var_all.append(var)
+                bias_all.append(bias)
+                corr_all.append(corr)
+
+            var_all  = np.stack(var_all, axis=0)   # (Nz, Nr) but var is tabulated vs r-derived m
+            bias_all = np.stack(bias_all, axis=0)  # (Nz, Nr)
+            corr_all = np.stack(corr_all, axis=0)  # (Nz, Nr) where Nr=len(r_grid)
+
+            f.create_dataset("r", data=r_grid)
+            f.create_dataset("m", data=m_grid)
+            f.create_dataset("var",  data=var_all)
+            f.create_dataset("bias", data=bias_all)
+            f.create_dataset("corr", data=corr_all)
+
+            # optional metadata
+            f.attrs["Om"] = self.param.cosmo.Om
+            f.attrs["Ob"] = self.param.cosmo.Ob
+            f.attrs["h0"] = self.param.cosmo.h0
+            f.attrs["ns"] = self.param.cosmo.ns
+            f.attrs["s8"] = self.param.cosmo.s8
+            f.attrs["dc"] = self.param.cosmo.dc
+            f.attrs["kmin"] = self.param.code.kmin
+            f.attrs["kmax"] = self.param.code.kmax
+            f.attrs["rmin"] = self.param.code.rmin
+            f.attrs["rmax"] = self.param.code.rmax
