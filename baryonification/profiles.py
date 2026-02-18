@@ -191,9 +191,16 @@ class Profiles:
         Thermal pressure (following arXiv:2009.05558, Eq. 13)
         in units of [(Msun/h)/(Mpc/h)^3 * (km/s)^2]
         """
-        Pintegral = cumtrapz(G * rho_gas * mass_tot / self.rbin ** 2, self.rbin, initial=0.0) 
-        Pth = (1 - al_nth * (self.rbin / self.rvir) ** n_nth) * (Pintegral[-1] - Pintegral)
-        Pth[np.where(Pth < 0)] = 0
+        def softplus(x, beta=100.0):
+            return np.logaddexp(0.0, beta*x) / beta
+
+        # pth = softplus(ptot - pnth, beta=100.0)
+        Pintegral = cumtrapz(G * rho_gas * mass_tot / self.rbin ** 2, self.rbin, initial=0.0)
+        Ptot = Pintegral[-1] - Pintegral
+        Pnth = al_nth * (self.rbin / self.rvir) ** n_nth * Ptot
+        #Pth = (1 - al_nth * (self.rbin / self.rvir) ** n_nth) * (Pintegral[-1] - Pintegral)
+        Pth = softplus(Ptot - Pnth, beta=100.0)
+        #Pth[np.where(Pth < 0)] = 0
         return Pth
     
     def calc_profiles(self):
