@@ -111,7 +111,7 @@ def code_par():
         "q0_exp": 0.0,           # Exponent of adiabatic contraction param Q0
         "q1": 0.25,              # Adiabatic contraction model param Q1 = q1*(1+z)*q1_exp
         "q1_exp": 0.0,           # Exponent of adiabatic contraction param Q1
-        "q2": 0.8,              
+        "q2": 0.7,              
         "q2_exp": 0.0,
         "Mhalo_min": 2.5e11,     # Minimum halo mass [Msun/h]
         "disp_trunc": 0.01,      # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
