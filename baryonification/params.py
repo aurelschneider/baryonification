@@ -114,7 +114,7 @@ def code_par():
         "q2": 0.7,              
         "q2_exp": 0.0,
         "Mhalo_min": 2.5e11,     # Minimum halo mass [Msun/h]
-        "Mhalo_max": 1e15,       # Maximum halo mass [Msun/h]
+        "Mhalo_max": 1e16,       # Maximum halo mass [Msun/h]
         "disp_trunc": 0.01,      # Truncation of displacment funct (disp=0 if disp<disp_trunc) [Mpc/h]
         "halo_excl": 0.4,        # Halo exclusion parameter (no exclusion = large number e.g. 1000)
         }

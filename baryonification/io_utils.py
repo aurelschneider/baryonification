@@ -525,6 +525,7 @@ class IO_shell:
                 h['rvir'] = select_halo['rvir'] / 1000 * (1+self.param.cosmo.z)
                 h['cvir'] = select_halo['cvir']
                 h = h[h['Mvir'] > self.param.code.Mhalo_min]
+                h = h[h['Mvir'] < self.param.code.Mhalo_max]
                 halo_shell[i] = h
             del lchalo_file, lchalo, h
         elif (halo_lc_file_format == 'CosmoGrid_nersc'):
