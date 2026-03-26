@@ -242,6 +242,11 @@ class Profiles:
         Da /= D0
         peak_height = 1.686 / self.cosmo_var ** 0.5
         eps  = (eps0 - eps1 * peak_height)
+        
+        # if eps < 1, set to 1
+        if np.size(eps) == 1:
+            if eps < 1:
+                eps = 1.0
 
         if (eps < 0):
             print("ERROR: eps<0. Abort")
