@@ -112,8 +112,14 @@ class Profiles:
         Mc = self.param.baryon.Mc
         mu = self.param.baryon.mu
         nu = self.param.baryon.nu
-        Mc_of_z = Mc * (1 + self.z) ** nu
-        
+
+        # Mc models
+        if (self.param.code.Mc_model == 0): # the default option
+            Mc_of_z = Mc * (1 + self.z) ** nu
+        if (self.param.code.Mc_model == 1): # used in the 3-param model of 2507.07892
+            Mc_of_z = Mc * 10**( -nu * self.z)   
+
+        # beta models
         if (self.param.code.beta_model == 0):
             dslope = 3.0
             beta = dslope - (Mc_of_z / self.Mvir) ** mu
@@ -122,7 +128,7 @@ class Profiles:
 
         elif (self.param.code.beta_model == 1):
             dslope = 3.0
-            beta = dslope * (self.Mvir / Mc) ** mu / (1 + (self.Mvir / Mc) ** mu)
+            beta = dslope * (self.Mvir / Mc_of_z) ** mu / (1 + (self.Mvir / Mc_of_z) ** mu)
 
         elif (self.param.code.beta_model == 2):
             # if beta serves directly as an input param of bfc,
@@ -139,7 +145,7 @@ class Profiles:
         """
         Normalised gas density profile
         """
-        thco = self.param.baryon.thco
+        thco = self.param.baryon.thco * (1 + self.param.cosmo.z)**self.param.baryon.nu_thco
         al = self.param.baryon.alpha
         be = self.beta_fct()
         ga = self.param.baryon.gamma

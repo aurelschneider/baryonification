@@ -20,6 +20,7 @@ dependencies = [
     "tqdm",
     "cosmic-toolbox",
     "requests",
+    "astropy",
     ]
 
 [project.optional-dependencies]

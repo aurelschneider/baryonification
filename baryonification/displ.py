@@ -7,7 +7,7 @@ import schwimmbad
 
 # Force tqdm to use threading-based locks (no semaphores)
 from tqdm import tqdm
-import gc
+import gc, sys
 from time import time
 from cosmic_toolbox import logger
 
@@ -658,6 +658,9 @@ def worker_method(args):
     obj, process, idx, task, args_for_loop_halo_chunks = args
     return obj.loop_halo_chunks(process, idx, task, args_for_loop_halo_chunks)
 
+def wrapper(args):
+    return loop_halo_chunks_worker(*args)
+
 class ShellDisplacer:
     """
     Class to handle shell displacement.
@@ -670,42 +673,50 @@ class ShellDisplacer:
         Reading in pixel and halo files
         dispalcing particles, writing healpix file
         """
-        LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
-        
-        io_shell = IO_shell(self.param)
-        h_list, thickness_list, redshift_list = io_shell.read_halo_lc_file()
-        shell_id, map_list = io_shell.read_healpix_file()
-        
-        
-        p_list = self.perform_get_particle(map_list, h_list)
-        del map_list
-        
-        if (self.param.code.multicomp == True):
-            gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list)
-            io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
-        elif (self.param.code.multicomp == False):
-            dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list)
-            io_shell.write_shell_file_singlecomp(dmb_shell)
-        else:
-            LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
-            exit()
-        
+        # create MPI pool
+        with schwimmbad.MPIPool() as pool:
+        # with schwimmbad.SerialPool() as pool:
+            
+            if not pool.is_master():
+                pool.wait()
+                sys.exit(0)
+
+            
+            LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
+            
+            io_shell = IO_shell(self.param)
+            h_list, thickness_list, redshift_list = io_shell.read_halo_lc_file()
+            shell_id, map_list = io_shell.read_healpix_file()
+            
+            p_list = self.perform_get_particle(map_list, h_list, pool)
+            del map_list
+            
+            if (self.param.code.multicomp == True):
+                gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, pool)
+                io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
+            elif (self.param.code.multicomp == False):
+                dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, pool)
+                io_shell.write_shell_file_singlecomp(dmb_shell)
+            else:
+                LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
+                exit()
+            
         return 0
 
-    def perform_get_particle(self, map_list, h_list):
+    def perform_get_particle(self, map_list, h_list, pool):
         """
         Convert map to particles, parallelized.
         """
-        num_processes = int(self.param.shell.max_shell - self.param.shell.min_shell)
-        if num_processes != len(map_list):
-            raise ValueError(f"Mismatch: {len(map_list)} shells but num_processes={num_processes}")
+        num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
+        if num_shells != len(map_list):
+            raise ValueError(f"Mismatch: {len(map_list)} shells but num_shells={num_shells}")
             
-        tasks = [(i, map_list[i], h_list[i], self.param) for i in range(num_processes)]
+        tasks = [(i, map_list[i], h_list[i], self.param) for i in range(num_shells)]
         
         output_dir = self.param.files.tmp_files
         results = []
-        for i_proc in range(num_processes):
-            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes}")
+        for i_proc in range(num_shells):
+            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_shells}")
             t1 = time()
             # if subsampled particles for a given DM shell are stored, read the file instead of rerunning
             filename_pixleparticle = f"{output_dir}/pixel_particles__{self.param.files.shellfile_in.replace('/','_').replace('.','_')}___shell_{self.param.shell.min_shell+i_proc}.pkl"
@@ -715,7 +726,7 @@ class ShellDisplacer:
                     result = pkl.load(pkl_file)
             else:
                 LOGGER.info(f"......No existing pixel particles file found for shell {self.param.shell.min_shell+i_proc}, entering particle subsampling")
-                result = particle_worker(tasks[i_proc])
+                result = particle_worker(tasks[i_proc],pool)
             
                 # store subsampled particles to disk (if output_pixelparticle_file=TRUE) 
                 if self.param.files.output_pixelparticle_file:
@@ -724,19 +735,19 @@ class ShellDisplacer:
             
             results.append(result)
             t2 = time()
-            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_processes} done ✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
+            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_shells} done ✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
 
         particle_shell = {i: p for i, p in results}
         return [particle_shell[i] for i in sorted(particle_shell.keys())]
 
-    def displace_shell(self, shell_id, p_list, redshift_list, h_list, thickness_list, test=False):
+    def displace_shell(self, shell_id, p_list, redshift_list, h_list, thickness_list, pool, test=False):
         '''
         displace particles on the shell with the halo file
         '''
         LOGGER.info(f"Displacing shells...")
-        num_processes = int(self.param.shell.max_shell - self.param.shell.min_shell)
+        num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
         
-        tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, np.repeat(self.param,num_processes)))
+        tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, np.repeat(self.param,num_shells)))
 
         if (self.param.code.multicomp == True):
             
@@ -744,16 +755,16 @@ class ShellDisplacer:
             dmdata = {}
             stardata = {}
 
-            for i_proc in range(num_processes):
-                LOGGER.info(f"......Shell {i_proc+1}/{num_processes}")
+            for i_proc in range(num_shells):
+                LOGGER.info(f"......Shell {i_proc+1}/{num_shells}")
                 t1 = time()
-                result = self.loop_halos(tasks[i_proc])
+                result = self.loop_halos(tasks[i_proc], pool)
                 i_shell = result[0]
                 gasdata[i_shell] = result[1]
                 dmdata[i_shell] = result[2]
                 stardata[i_shell] = result[3]
                 t2 = time()
-                LOGGER.info(f"......Shell {i_proc+1}/{num_processes} done. Ellapsed time: {t2 - t1:.3f} seconds")
+                LOGGER.info(f"......Shell {i_proc+1}/{num_shells} done. Ellapsed time: {t2 - t1:.3f} seconds")
             LOGGER.info(f"Displacing shells done ✅\n")
             return gasdata, dmdata, stardata
         
@@ -761,14 +772,14 @@ class ShellDisplacer:
 
             dmbdata = {}
 
-            for i_proc in range(num_processes):
-                LOGGER.info(f"......Shell {i_proc+1}/{num_processes}")
+            for i_proc in range(num_shells):
+                LOGGER.info(f"......Shell {i_proc+1}/{num_shells}")
                 t1 = time()
-                result = self.loop_halos(tasks[i_proc])
+                result = self.loop_halos(tasks[i_proc], pool)
                 i_shell = result[0]
                 dmbdata[i_shell] = result[1]
                 t2 = time()
-                LOGGER.info(f"......Shell {i_proc+1}/{num_processes} done. Ellapsed time: {t2 - t1:.3f} seconds")
+                LOGGER.info(f"......Shell {i_proc+1}/{num_shells} done. Ellapsed time: {t2 - t1:.3f} seconds")
             LOGGER.info(f"Displacing shells done ✅\n")
             return dmbdata
         
@@ -776,7 +787,7 @@ class ShellDisplacer:
             LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
             exit()
 
-    def loop_halos(self, task):
+    def loop_halos(self, task, pool):
         '''
         loop over halos and displace particles
         '''
@@ -795,18 +806,77 @@ class ShellDisplacer:
 
         #build tree for dm and baryons, separate particles
         #id of all halo particle (ihalo=0 means field particles)
-        p_tree = spatial.cKDTree(list(zip(p['x'],p['y'],p['z'])), leafsize=100)
-        iphalo = np.zeros(len(p))
-        multi_halo = np.zeros(len(p), dtype=bool)
-        for i in range(len(h['Mvir'])):
-            ip   = np.array(p_tree.query_ball_point((h['x'][i], h['y'][i], h['z'][i]), h['rvir'][i]))
-            if len(ip)>0:
-                previously = iphalo[ip]
-                collided  = (previously != 0) & (previously != i)
-                multi_halo[ip[collided]] = True
-                iphalo[ip] = i
-  
         
+        t1 = time()
+        # p_tree = spatial.cKDTree(list(zip(p['x'],p['y'],p['z'])), leafsize=100)
+        pos = np.empty((len(p), 3), dtype=np.float32)
+        pos[:, 0] = p['x']
+        pos[:, 1] = p['y']
+        pos[:, 2] = p['z']
+        LOGGER.info(f"......KD-tree building for {pos.shape} array...")
+        p_tree = spatial.cKDTree(pos[:,:], leafsize=100)
+        del pos
+        t2 = time()
+        LOGGER.info(f"......KD-tree building done✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
+
+        
+        """
+        parallelization
+        """
+        gl_start = time()
+
+        nproc = min(param.shell.N_cpu - 1, len(h["Mvir"]))
+        if param.files.halolc_format == "euclid_fs2":
+            nproc = min(param.shell.N_cpu, len(h["Mvir"]),8)
+        if nproc == 0:
+            # the above condition is valid for parallel jobs
+            nproc += 1
+        
+        LOGGER.info(f"......Looping over halos {len(h)} halos, using {nproc} CPUs.")
+
+        idx = np.arange(len(h["Mvir"]))
+
+        output_dir = self.param.files.tmp_files
+        # store px,py,pz to be used by MPI tasks
+        fields = ['x','y','z']
+        new_dtype = np.dtype([(f, p[f].dtype) for f in fields])
+        # Allocate new structured array
+        p_coords = np.zeros(len(p), dtype=new_dtype)
+        # Copy the requested fields
+        for f in fields:
+            p_coords[f] = p[f]
+        np.save(os.path.join(output_dir,"p.npy"), p_coords)  # save p to a file to avoid pickling issues
+        np.save(os.path.join(output_dir,"h.npy"), h)  # save p to a file to avoid pickling issues
+        with open(os.path.join(output_dir,"p_tree.pkl"), "wb") as f:
+            pkl.dump(p_tree, f)
+
+        # prepare argument list
+        args_for_loop_halo_chunks = [shell_cov, var_tck, bias_tck, corr_tck]
+        task_mpi = (shell_id, thickness, redshift, param)
+        iterable_args = [
+            (i_cpu, idx[i_cpu::nproc], task_mpi, args_for_loop_halo_chunks, output_dir)
+            for i_cpu in range(nproc)
+        ]
+
+        # ---- parallel execution ----
+        results = list(pool.map(wrapper, iterable_args))
+        # ----------------------------
+
+
+        gl_end = time()
+        LOGGER.info(f"......Looping over halos done. Ellapsed time: {gl_end - gl_start:.3f}")
+        
+        LOGGER.info(f"......Cleaning up temporary files (tree, particles, h)")
+        os.remove(os.path.join(output_dir,"p.npy"))
+        os.remove(os.path.join(output_dir,"h.npy"))
+        os.remove(os.path.join(output_dir,"p_tree.pkl"))
+
+        LOGGER.info(f"......Splitting particles to dm and baryons...")
+
+        # results = [(DpBAR_part, DpFDM_part), ...]
+        bar_filenames = [r[0] for r in results]
+        dm_filenames = [r[1] for r in results]
+
         p_darkmatter = p.copy() # becomes dmb for multicomp = False
         if param.code.multicomp:
             p_baryons = p.copy()
@@ -815,43 +885,19 @@ class ShellDisplacer:
             p_baryons = None
         n_p = len(p)
         del p
+
+
+        t_split = time()
+        LOGGER.info(f"......Splitting particles to dm and baryons done. Ellapsed time: {t_split - gl_end:.3f}s")
         
-        """
-        parallelization
-        """
-        gl_start = time()
-
-        nproc = min(param.shell.N_cpu, len(h["Mvir"]))
-        LOGGER.debug(f"......Looping over halos {len(h)} halos, using {nproc} CPUs.")
-
-        idx = np.arange(len(h["Mvir"]))
-
-        # prepare argument list
-        args_for_loop_halo_chunks = shell_cov, var_tck, bias_tck, corr_tck, p_tree, p_darkmatter, p_baryons, iphalo, multi_halo, n_p
-        iterable_args = [
-            (self, i_proc, idx[i_proc::nproc], task, args_for_loop_halo_chunks)
-            for i_proc in range(nproc)
-        ]
-
-        # ---- parallel execution ----
-        with schwimmbad.MultiPool(processes=nproc) as pool:
-            results = list(pool.map(worker_method, iterable_args))
-        # ----------------------------
-
-        gl_end = time()
-        LOGGER.debug(f"......Looping over halos done. Ellapsed time: {gl_end - gl_start}")
-
-        # results = [(DpBAR_part, DpFDM_part), ...]
-        bar_filenames = [r[0] for r in results]
-        dm_filenames = [r[1] for r in results]
-
-        LOGGER.debug(f"......Summing displacements...")
+        LOGGER.info(f"......Summing displacements...")
         
         if (self.param.code.multicomp == True):
-            DpBAR = self.sum_structured_arrays_from_files_multicomp(bar_filenames)
-            DpFDM = self.sum_structured_arrays_from_files_multicomp(dm_filenames)
+            DpBAR = sum_structured_arrays_from_files_multicomp(bar_filenames)
+            DpFDM = sum_structured_arrays_from_files_multicomp(dm_filenames)
             
-            LOGGER.debug(f"......Summing displacements done")
+            t_sum = time()
+            LOGGER.info(f"......Summing displacements done. Ellapsed time: {t_sum - t_split:.3f}s")
 
             gc.collect()
 
@@ -878,16 +924,17 @@ class ShellDisplacer:
             t = time()
             #convert position to healpix index and store the data
             LOGGER.info(f"......Converting particles to healpix maps...")
-            shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'])
-            shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None)
-            shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'])
+            shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'], pool = pool)
+            shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool)
+            shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'], pool = pool)
             LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds")
             return shell_id, shell_gas, shell_dm, shell_star
         
         elif (self.param.code.multicomp == False):
-            Dp = self.sum_structured_arrays_from_files_singlecomp(dm_filenames)
+            Dp = sum_structured_arrays_from_files_singlecomp(dm_filenames)
             
-            LOGGER.debug(f"......Summing displacements done")
+            t_sum = time()
+            LOGGER.info(f"......Summing displacements done. Ellapsed time: {t_sum - t_split:.3f}s")
 
             gc.collect()
 
@@ -906,439 +953,12 @@ class ShellDisplacer:
             t = time()
             #convert position to healpix index and store the data
             LOGGER.info(f"......Converting particles to healpix maps...")
-            shell_dmb = get_healpix_map(p_darkmatter,param, star_fraction=None)
+            shell_dmb = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool)
             LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds")
             return shell_id, shell_dmb
         
         else:
             LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
             exit()
-
-    def loop_halo_chunks(self, i_cpu, idx_local, task, args_for_loop_halo_chunks):
         
-        LOGGER.debug(f'......process {i_cpu} starting with {len(idx_local)} halos...')
-        ts = time()
-
-        shell_id, h, thickness, p, redshift, param = task
-        shell_cov, var_tck, bias_tck, corr_tck, p_tree, p_darkmatter, p_baryons, iphalo, multi_halo, n_p = args_for_loop_halo_chunks
-        
-        profiles = Profiles(None, 1e13, None, None, None, None, self.param)
-        #Ready for computing the displacemnet
-        
-        
-        # multicomponent routine - gas, stars, dm
-        if (self.param.code.multicomp == True):
             
-            Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),("id",'>f4'),("rho2D_star_at_xyz",'>f4'),("rho2D_bar_at_xyz",'>f4')]) #rho2D_star_at_xyz, rho2D_bar_at_xyz = analytical densities at position xyz
-            DpBAR = np.zeros(n_p,dtype=Dp_type)
-            DpFDM = np.zeros(n_p,dtype=Dp_type)
-            
-            n_halos_local = len(idx_local)
-            for j in maybe_progressbar(idx_local ,total = n_halos_local, desc = f"Process {i_cpu}: Loop over halo subset"):
-                
-                #select host haloes (subhaloes >= 1)
-                if (h['IDhost'][j] < 0):
-                    hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
-                    h_cov = h['cov'][j]
-                    Mvir, rvir, cvir = h['Mvir'][j], h['rvir'][j], h['cvir'][j]
-
-                    # print('start halo: ', j)
-
-                    #range where we consider displacement
-                    rmax = self.param.code.rmax
-                    rmin = (0.001*rvir if 0.001*rvir>self.param.code.rmin else self.param.code.rmin)
-                    rmax = (20.0*rvir if 20.0*rvir<self.param.code.rmax else self.param.code.rmax)
-                    rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
-
-                    #load 3D profiles
-                    cosmo_var  = splev(Mvir,var_tck)
-                    cosmo_bias = splev(Mvir,bias_tck)
-                    cosmo_corr = splev(rbin,corr_tck)
-                    profiles._update_params({'rbin': rbin, 'Mvir': Mvir, 'cvir': cvir, 'cosmo_corr': cosmo_corr, 'cosmo_bias': cosmo_bias, 'cosmo_var': cosmo_var})
-                    frac, dens, mass, press, temp = profiles.calc_profiles()
-
-                    #project 3D profiles
-                    rhoBAR_i = (1-frac['CDM'])*(dens['NFW'] + dens['BG'])
-                    rhoBAR_f = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA'] + (1-frac['CDM'])*dens['BG']
-                    rhoDM_i = frac['CDM']*(dens['NFW'] + dens['BG'])
-                    rhoDM_f = frac['CDM']*(dens['CDM'] + dens['BG'])
-                    
-                    #line of sight integration
-                    projected_MDM_i = projection(rhoDM_i,rbin,rvir,thickness,param, output='mass')
-                    projected_MDM_f = projection(rhoDM_f,rbin,rvir,thickness,param, output='mass')
-                    projected_MBAR_i = projection(rhoBAR_i,rbin,rvir,thickness,param, output='mass')
-                    projected_MBAR_f = projection(rhoBAR_f,rbin,rvir,thickness,param, output='mass')
-
-                    #displacement functions
-                    DBAR = self.displ(rbin, projected_MBAR_i, projected_MBAR_f)
-                    DFDM = self.displ(rbin, projected_MDM_i, projected_MDM_f)
-                    # print(DBAR, DFDM)
-
-                    #r_boundary = self.param.shell.boundary_factor * rvir
-                    #imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
-
-                    #DBAR *= imf
-                    #DFDM *= imf
-
-                    #V_overlap_ov_tot = relative volume (as a function of rbin)
-                    V_overlap_ov_tot = impact_factor(rbin, h_cov, shell_cov, thickness)
-
-                    #correction = [int dr r^2 V_rel(r) rho(r)]/[int dr r^2 rho(r)]
-                    rhoCDM = dens['CDM']
-                    rhoBAR = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
-                    corrFDM = np.trapz(rbin**2 * V_overlap_ov_tot * rhoCDM, rbin)/np.trapz(rbin**2 * rhoCDM, rbin)
-                    corrBAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoBAR, rbin)/np.trapz(rbin**2 * rhoBAR, rbin)
-                    #print(V_overlap_ov_tot, corrBAR)
-                    DBAR *= corrBAR
-                    DFDM *= corrFDM
-                    
-
-                    # print(DBAR, DFDM,imf)   
-                    DBAR_tck = splrep(rbin, DBAR,s=0,k=3)
-                    DFDM_tck = splrep(rbin, DFDM,s=0,k=3)
-                        
-                    smallestD = param.code.disp_trunc #Mpc/h
-                    # print(DBAR, DFDM, smallestD)   
-                    #array of idx with DBAR > Dsmallest
-                    idx_BAR = np.where(abs(DBAR) > smallestD)
-                    idx_BAR = idx_BAR[:][0]
-                    if (len(idx_BAR)>1):
-                        idx_largest = idx_BAR[-1]
-                        rball_BAR = rbin[idx_largest]
-                    else:
-                        rball_BAR = 0.0
-
-                    #array of idx with DFDM > Dsmallest
-                    idx_FDM = np.where(abs(DFDM) > smallestD)
-                    idx_FDM = idx_FDM[:][0]
-                    if (len(idx_FDM)>1):
-                        idx_largest = idx_FDM[-1]
-                        rball_FDM = rbin[idx_largest]
-                    else:
-                        rball_FDM = 0.0
-
-                    #largest rball
-                    rball = max(rball_BAR,rball_FDM)
-                    # print('rball before arc = ', rball)
-                    rball = euclidean_distance(rball,shell_cov,param)
-                
-                    #particle ids within rball
-                    ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
-                    # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
-
-                    if (len(ipbool) > 0):
-                        #calculating radii of FDM particles around halo j
-                        rpFDM  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
-                                (p_darkmatter['y'][ipbool]-hy)**2.0 +
-                                (p_darkmatter['z'][ipbool]-hz)**2.0)**0.5
-                        rpFDM = arcdistance(rpFDM,shell_cov,param)
-
-                        #calculating radii of BAR particles around halo j
-                        rpBAR = ((p_baryons['x'][ipbool]-hx)**2.0 +
-                                (p_baryons['y'][ipbool]-hy)**2.0 +
-                                (p_baryons['z'][ipbool]-hz)**2.0)**0.5
-                        rpBAR = arcdistance(rpBAR,shell_cov,param)
-
-                        if param.shell.nbrhalo == 1:
-
-                            mask_out = (rpBAR > rvir) & (iphalo[ipbool] > 0)    
-                            mask = mask_out | multi_halo[ipbool]
-                            ipbool_nbrhaloes    = ipbool[mask]
-                            ipbool_wo_nbrhaloes = ipbool[~mask]
-
-                            #calculating radii of BAR particles around halo j
-                            rpBAR_nbrhaloes = ((p_baryons['x'][ipbool_nbrhaloes]-hx)**2.0 +
-                                        (p_baryons['y'][ipbool_nbrhaloes]-hy)**2.0 +
-                                        (p_baryons['z'][ipbool_nbrhaloes]-hz)**2.0)**0.5
-                            rpBAR_nbrhaloes = arcdistance(rpBAR_nbrhaloes,shell_cov,param)
-                            rpBAR_wo_nbrhaloes = ((p_baryons['x'][ipbool_wo_nbrhaloes]-hx)**2.0 +
-                                        (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)**2.0 +
-                                        (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)**2.0)**0.5
-                            rpBAR_wo_nbrhaloes = arcdistance(rpBAR_wo_nbrhaloes,shell_cov,param)
-
-                            DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                            DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                            DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                            DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
-
-                            if(len(rpBAR_nbrhaloes)>0):
-                                DrpBAR_nbrhaloes    = splev(rpBAR_nbrhaloes,DFDM_tck,der=0,ext=1)
-                                DrpBAR_wo_nbrhaloes = splev(rpBAR_wo_nbrhaloes,DBAR_tck,der=0,ext=1)
-                                DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-hx)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                                DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-hy)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                                DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-hz)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                                DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-hx)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                                DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                                DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            else:
-                                DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
-                                DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
-                                DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
-                                DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
-                                
-                        elif param.shell.nbrhalo == 0:
-                            
-                            DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
-                            DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
-                            DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
-                            DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
-
-                            DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                            DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                            DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                            DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
-
-                        #separate baryons into gas and stars                  
-                        #probabilities
-                        proj_HGA = projection(frac['HGA']*(dens['HGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
-                        proj_IGA = projection(frac['IGA']*(dens['IGA']+dens['BG']), rbin, rvir, thickness, param, output='density')
-                        proj_CGA = projection(frac['CGA']*(dens['CGA']), rbin, rvir, thickness, param, output='density', star=True)
-                        proj_SGA = projection(frac['SGA']*(dens['SGA']), rbin, rvir, thickness, param, output='density', star=True)
-                        
-                        #make sure no stars are outside virial radius
-                        proj_CGA[np.where(rbin>=h['rvir'][j])] = 0.0 
-                        proj_SGA[np.where(rbin>=h['rvir'][j])] = 0.0 
-
-                        #interpolate projected densities
-                        rho2D_HGA_tck = splrep(rbin, proj_HGA, s=0, k=1)
-                        rho2D_IGA_tck = splrep(rbin, proj_IGA, s=0, k=1)
-                        rho2D_CGA_tck = splrep(rbin, proj_CGA, s=0, k=1)
-                        rho2D_SGA_tck = splrep(rbin, proj_SGA, s=0, k=1)
-
-                        if param.shell.nbrhalo == 1:
-                            if(len(rpBAR_nbrhaloes)>0):
-                                rpBAR_wo_nbrhaloes_displ = rpBAR_wo_nbrhaloes + DrpBAR_wo_nbrhaloes
-                                rho2D_HGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_HGA_tck,der=0,ext=3)
-                                rho2D_IGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_IGA_tck,der=0,ext=3)
-                                rho2D_CGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_CGA_tck,der=0,ext=3)
-                                rho2D_SGA = splev(rpBAR_wo_nbrhaloes_displ, rho2D_SGA_tck,der=0,ext=3)
-                            else:
-                                rpBAR_displ = rpBAR + DrpBAR
-                                rho2D_HGA = splev(rpBAR_displ, rho2D_HGA_tck,der=0,ext=3)
-                                rho2D_IGA = splev(rpBAR_displ, rho2D_IGA_tck,der=0,ext=3)
-                                rho2D_CGA = splev(rpBAR_displ, rho2D_CGA_tck,der=0,ext=3)
-                                rho2D_SGA = splev(rpBAR_displ, rho2D_SGA_tck,der=0,ext=3)
-                                
-                        elif param.shell.nbrhalo == 0:
-                            rpBAR_displ = rpBAR + DrpBAR
-                            rho2D_HGA = splev(rpBAR_displ, rho2D_HGA_tck,der=0,ext=3)
-                            rho2D_IGA = splev(rpBAR_displ, rho2D_IGA_tck,der=0,ext=3)
-                            rho2D_CGA = splev(rpBAR_displ, rho2D_CGA_tck,der=0,ext=3)
-                            rho2D_SGA = splev(rpBAR_displ, rho2D_SGA_tck,der=0,ext=3)
-                        
-                        #we record how likely particles in this healpix is a star with a float id
-                        #id=0.0 for full gas, id=1.0 for full star
-                        #imf_star   = impact_factor(h_cov, shell_cov, thickness, 1.0*rvir)
-                        #rho2D_star = imf_star*(rho2D_CGA + rho2D_SGA)
-                        #rho2D_bar  = imf_star*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
-                        
-                        V_overlap_ov_tot   = impact_factor(rbin, h_cov, shell_cov, thickness)
-                        rhoSTAR = frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
-                        corrSTAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoSTAR, rbin)/np.trapz(rbin**2 * rhoSTAR, rbin)
-
-                        rho2D_star = corrSTAR*(rho2D_CGA + rho2D_SGA)
-                        rho2D_bar  = corrSTAR*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
-
-
-                        if param.shell.nbrhalo==1:
-                            if (len(rpBAR_nbrhaloes) > 0):
-                                DpBAR['rho2D_star_at_xyz'][ipbool_wo_nbrhaloes] = rho2D_star
-                                DpBAR['rho2D_bar_at_xyz'][ipbool_wo_nbrhaloes]  = rho2D_bar
-                            else:
-                                DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
-                                DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
-                                #DpBAR['rho2D_bar_at_xyz'][ipbool] = np.clip(DpBAR['rho2D_bar_at_xyz'][ipbool], a_min=0.0, a_max=1.0)
-                        elif param.shell.nbrhalo == 0:
-                            DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
-                            DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
-                            #DpBAR['rho2D_bar_at_xyz'][ipbool] = np.clip(DpBAR['rho2D_bar_at_xyz'][ipbool], a_min=0.0, a_max=1.0)
-            # store displacements obtained from different CPUs to disk temporarily to be collected later
-            output_dir = self.param.files.tmp_files
-            filenameDpBAR = f'{output_dir}/DpBAR_shell_{shell_id}_cpu_{i_cpu}.npy'
-            filenameDrpFDM = f'{output_dir}/DrpFDM_shell_{shell_id}_cpu_{i_cpu}.npy'
-
-            # save the temporary files
-            np.save(filenameDpBAR, DpBAR)
-            np.save(filenameDrpFDM, DpFDM)
-
-            del rpFDM, rpBAR, DrpFDM, DrpBAR
-            LOGGER.debug(f'......process {i_cpu} starting with {len(idx_local)} halos done. Ellapsed time: {time()-ts}')
-            return filenameDpBAR, filenameDrpFDM
-        
-        
-        elif (self.param.code.multicomp == False):
-            
-            Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f')])
-            Dp = np.zeros(n_p,dtype=Dp_type)
-            
-            n_halos_local = len(idx_local)
-            for j in maybe_progressbar(idx_local ,total = n_halos_local, desc = f"Process {i_cpu}: Loop over halo subset"):
-                
-                #select host haloes (subhaloes >= 1)
-                if (h['IDhost'][j] < 0):
-                    hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
-                    h_cov = h['cov'][j]
-                    Mvir, rvir, cvir = h['Mvir'][j], h['rvir'][j], h['cvir'][j]
-
-                    # print('start halo: ', j)
-
-                    #range where we consider displacement
-                    rmax = self.param.code.rmax
-                    rmin = (0.001*rvir if 0.001*rvir>self.param.code.rmin else self.param.code.rmin)
-                    rmax = (20.0*rvir if 20.0*rvir<self.param.code.rmax else self.param.code.rmax)
-                    rbin = np.logspace(np.log10(rmin),np.log10(rmax),100,base=10)
-
-                    #load 3D profiles
-                    cosmo_var  = splev(Mvir,var_tck)
-                    cosmo_bias = splev(Mvir,bias_tck)
-                    cosmo_corr = splev(rbin,corr_tck)
-                    profiles._update_params({'rbin': rbin, 'Mvir': Mvir, 'cvir': cvir, 'cosmo_corr': cosmo_corr, 'cosmo_bias': cosmo_bias, 'cosmo_var': cosmo_var})
-                    frac, dens, mass, press, temp = profiles.calc_profiles()
-
-                    #project 3D profiles
-                    rhoDMB_i = (dens['NFW'] + dens['BG'])
-                    rhoDMB_f = (dens['DMB'] + dens['BG'])
-                    
-                    #line of sight integration
-                    projected_MDM_i = projection(rhoDMB_i,rbin,rvir,thickness,param, output='mass')
-                    projected_MDM_f = projection(rhoDMB_f,rbin,rvir,thickness,param, output='mass')
-
-                    #displacement functions
-                    DDMB = self.displ(rbin, projected_MDM_i, projected_MDM_f)
-                    
-                    #r_boundary = self.param.shell.boundary_factor * rvir
-                    #imf = impact_factor(h_cov, shell_cov, thickness, r_boundary)
-                    #DDMB *= imf
-                    
-                    #V_overlap_ov_tot = relative volume (as a function of rbin)
-                    V_overlap_ov_tot = impact_factor(rbin, h_cov, shell_cov, thickness)
-
-                    #correction = [int dr r^2 V_rel(r) rho(r)]/[int dr r^2 rho(r)]
-                    rhoDMB = dens['DMB']
-                    corrDMB = np.trapz(rbin**2 * V_overlap_ov_tot * rhoDMB, rbin)/np.trapz(rbin**2 * rhoDMB, rbin)
-                    DDMB *= corrDMB
-
-                    DDMB_tck = splrep(rbin, DDMB,s=0,k=3)
-                        
-                    smallestD = param.code.disp_trunc #Mpc/h
-                    #array of idx with DBAR > Dsmallest
-
-                    #array of idx with DDMB > Dsmallest
-                    idx_DMB = np.where(abs(DDMB) > smallestD)
-                    idx_DMB = idx_DMB[:][0]
-                    if (len(idx_DMB)>1):
-                        idx_largest = idx_DMB[-1]
-                        rball = rbin[idx_largest]
-                    else:
-                        rball = 0.0
-
-                    rball = euclidean_distance(rball,shell_cov,param)
-                
-                    #particle ids within rball
-                    ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
-                    # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
-
-                    if (len(ipbool) > 0):
-                        #calculating radii of FDM particles around halo j
-                        rpDMB  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
-                                (p_darkmatter['y'][ipbool]-hy)**2.0 +
-                                (p_darkmatter['z'][ipbool]-hz)**2.0)**0.5
-                        rpDMB = arcdistance(rpDMB,shell_cov,param)
-
-                        DrpDMB = splev(rpDMB,DDMB_tck,der=0,ext=1)
-                        Dp['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpDMB/rpDMB
-                        Dp['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpDMB/rpDMB
-                        Dp['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpDMB/rpDMB
-
-                        
-            # store displacements obtained from different CPUs to disk temporarily to be collected later
-            output_dir = self.param.files.tmp_files
-            
-            filenameDrpDMB = f'{output_dir}/DrpDMB_shell_{shell_id}_cpu_{i_cpu}.npy'
-
-            # save the temporary files
-            np.save(filenameDrpDMB, Dp)
-
-            del rpDMB, DrpDMB
-            LOGGER.debug(f'......process {i_cpu} starting with {len(idx_local)} halos done. Ellapsed time: {time()-ts}')
-            return "None", filenameDrpDMB
-
-        else:
-            LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
-            exit()
-
-        
-    def sum_structured_arrays_from_files_multicomp(self,filenames):
-        """
-        Sum 'x', 'y', 'z', 'id' fields from a list of .npy structured arrays,
-        opening one file at a time to minimize open file count and memory use.
-        """
-        if not filenames:
-            raise ValueError("Empty file list")
-
-        # Initialize accumulator with zeros like the first file
-        first = np.load(filenames[0])
-        out = np.zeros_like(first)
-        out["x"] += first["x"]
-        out["y"] += first["y"]
-        out["z"] += first["z"]
-        out["rho2D_star_at_xyz"] += first["rho2D_star_at_xyz"]
-        out["rho2D_bar_at_xyz"]  += first["rho2D_bar_at_xyz"]
-        del first
-
-        # Loop through remaining files one by one
-        for fn in filenames[1:]:
-            arr = np.load(fn)
-            out["x"] += arr["x"]
-            out["y"] += arr["y"]
-            out["z"] += arr["z"]
-            out["rho2D_star_at_xyz"] += arr["rho2D_star_at_xyz"]
-            out["rho2D_bar_at_xyz"]  += arr["rho2D_bar_at_xyz"]
-            del arr
-
-        LOGGER.debug(f"minmax {np.min(out['rho2D_bar_at_xyz'])}, {np.max(out['rho2D_bar_at_xyz'])}")
-        #calculate stellar fraction for each pixelparticle
-        mask = (out["rho2D_bar_at_xyz"] != 0)
-        out["id"][mask] = out["rho2D_star_at_xyz"][mask]/out["rho2D_bar_at_xyz"][mask]
-
-        for fn in filenames:
-            os.remove(fn)
-        return out
-    
-    def sum_structured_arrays_from_files_singlecomp(self,filenames):
-        """
-        Sum 'x', 'y', 'z', 'id' fields from a list of .npy structured arrays,
-        opening one file at a time to minimize open file count and memory use.
-        """
-        if not filenames:
-            raise ValueError("Empty file list")
-
-        # Initialize accumulator with zeros like the first file
-        first = np.load(filenames[0])
-        out = np.zeros_like(first)
-        out["x"] += first["x"]
-        out["y"] += first["y"]
-        out["z"] += first["z"]
-        del first
-
-        # Loop through remaining files one by one
-        for fn in filenames[1:]:
-            arr = np.load(fn)
-            out["x"] += arr["x"]
-            out["y"] += arr["y"]
-            out["z"] += arr["z"]
-            del arr
-
-        for fn in filenames:
-            os.remove(fn)
-        return out
-
-    def displ(self, rbin, MINITIAL, MFINAL):
-        """
-        Calculates the displacement 
-        """
-        MFINAL_tck = splrep(rbin, MFINAL, s=0, k=3)
-        MFINALinv_tck = splrep(MFINAL, rbin, s=0, k=3)
-        rFINAL = splev(MINITIAL, MFINALinv_tck, der=0)
-        DFINAL = rFINAL - rbin
-        return DFINAL

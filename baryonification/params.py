@@ -49,6 +49,7 @@ def baryon_par():
         "beta": 3.0,      # can be used instead of beta(M,z)
         "ciga": 0.1,      # fraction of cold gas
         "nu": 0.0,        # beta(M,c): redshift dependence
+        "nu_thco": 0.0,   # thco redshift dependence
         "thco": 0.1,      # core factor thco=rco/rvir
         "alpha": 1.0,     # index in gas profile [default: 1.0]
         "gamma": 1.5,     # index in gas profile [default: 2.0]
@@ -105,6 +106,7 @@ def code_par():
         "rbuffer": 10.0,         # Buffer size to take care of boundary conditions
         "eps0": 4.0,             # Truncation factor: eps=rtr/rvir with eps = eps0 - eps1*nu
         "eps1": 0.5,             # eps1=0 corresponds to the old case
+        "Mc_model": 0,           # 0: fiducial power-law z-dependence of Mc 1: as in 3-parameter model of Schneider+25
         "beta_model": 1,         # 0: old model from Schneider+18 1: new model
         "AC_model": 5,           # 0: Abadi2010, 1: Velmani&Paranjape2023, 2:stepfct followed by AC, 5: empirical model (default)
         "q0": 0.075,             # Adiabatic contraction model param Q0 = q0*(1+z)*q0_exp

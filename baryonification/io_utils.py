@@ -4,6 +4,7 @@ PRINT INFORMATION INTO TEMPORARY FILE
 
 """
 import numpy as np
+from astropy.io import fits
 from scipy import spatial
 import h5py
 import healpy as hp
@@ -459,8 +460,23 @@ class IO_shell:
             for i in shell_id:
                 dmo_pixels   = shell_data[i]
                 shells[i] = dmo_pixels
+        elif shell_file_format == 'euclid_fs2':
+            try:
+                steps_filename = '/cluster/work/refregier/jbucko/shell_baryonification/eulid_fs2/data/steps.fs2.ssv'
+                shell_info = np.genfromtxt(steps_filename,skip_header=1)
+            except IOError:
+                LOGGER.critical(f'IOERROR: {steps_filename} file does not exist!')
+                exit()
+            shell_id = range(min_shell,max_shell)
+            for i in shell_id:
+                step = shell_info[i]
+                step_id = int(step[0])
+                LOGGER.debug(f"Reading shell file: {shell_file_in+f'.{step_id:05d}.fits'}")
+                hdul = fits.open(shell_file_in+f".{step_id:05d}.fits")
+                pixels = np.array(hdul[1].data, dtype=float)
+                shells[i] = pixels
         else:
-            print("Other format not supported")
+            LOGGER.critical(f"Other shell file formats not supported. Requested format not recognized: {shell_file_format}")
             exit()
         map_list = [shells[i] for i in shell_id]
         # check tthe consistency of the shell length with nside
@@ -472,7 +488,7 @@ class IO_shell:
         LOGGER.info(f"Reading healpix shells done ✅\n")
         return shell_id, map_list
 
-    def read_halo_lc_file(self,output_shell_info = False):
+    def read_halo_lc_file(self,output_shell_info = False,read_velocities = False):
         """
         Read in halo lightcone
         """
@@ -566,6 +582,9 @@ class IO_shell:
                 h['x'] = select_halo['x'] * shell_cov / norm
                 h['y'] = select_halo['y'] * shell_cov / norm
                 h['z'] = select_halo['z'] * shell_cov / norm
+                # velocities
+                if read_velocities:
+                    h = append_fields(h, ['vx', 'vy', 'vz'], [select_halo['vx'], select_halo['vy'], select_halo['vz']])
                 #read Mvir, cvir, rvir
                 h['Mvir'] =  select_masses
                 h['rvir'] = select_radii
@@ -574,8 +593,78 @@ class IO_shell:
                 halo_shell[i] = h
             lchalo_file.close()
             del h#, halos_cosmogrid_old
+        elif (halo_lc_file_format == 'euclid_fs2'): # for euclid_fs2_fs2
+            LOGGER.debug(f"Opening halo lightcone file: {halo_lc_file}")
+            lchalo_file = fits.open(halo_lc_file)
+            LOGGER.warning(f"Current implementation assumes only host halos from the lightcone (pid = -1).")
+            halos_lightcone = lchalo_file[1].data
+            mask_mass = (halos_lightcone['m200c'] > self.param.code.Mhalo_min)
+            halos_lightcone = halos_lightcone[mask_mass]
+            del mask_mass
+
+            try:
+                steps_filename = '/cluster/work/refregier/jbucko/shell_baryonification/eulid_fs2/data/steps.fs2.ssv'
+                shell_info = np.genfromtxt(steps_filename,skip_header=1)
+            except IOError:
+                LOGGER.critical(f'IOERROR: {steps_filename} file does not exist!')
+                exit()
+        
+            shell_comoving_dis = shell_info[:,3] # median comoving distances in Mpc/h
+            thickness = shell_info[:,2] - shell_info[:,1]
+            redshift = shell_info[:,-2]
+            
+            # custom halo data - to unify with the rest of the formats
+            h_dt = np.dtype([('ID', '<i8'), ('IDhost', '<i8'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
+            halo_shell = {}
+            shell_id = range(min_shell, max_shell)
+            
+            # compute comoving distance for all the halos
+            halos_com_distance = np.sqrt(halos_lightcone['x'] ** 2 + halos_lightcone['y'] ** 2 + halos_lightcone['z'] ** 2)
+
+
+            for i in shell_id:
+                self.param.cosmo.z = redshift[i]
+
+                min_com_dist = shell_info[i,1]
+                max_com_dist = shell_info[i,2]
+                buffer = 5 # buffer zone for halos in cMpc/h
+                LOGGER.debug(f"shell ID: {shell_id}, redshift: {redshift[i]:.3f}, comoving distance range: [{min_com_dist:.3f}, {max_com_dist:.3f}] Mpc/h (+-{buffer} Mpc/h buffer zone), taking halos above {self.param.code.Mhalo_min:.3e} Msun/h")
+                
+                mask_shell = (halos_com_distance >= min_com_dist - buffer) & (halos_com_distance < max_com_dist + buffer)
+                halos_shell = halos_lightcone[mask_shell] 
+                del mask_shell
+                
+                # filter halos
+                masses = halos_shell['m200c'] # in Msun/h
+                radii = (3*masses/(4*np.pi*200*self.CosmoCalculator.rhoc_of_z()))**(1/3)#halos_props[halos_pos['uid']]['r_200c'] # fix radii, as rhoc now is 2.775e11 at all redshifts
+                concentrations = radii/(halos_shell['rs']/1000) # r200c / rs, originally, rs is in kpc/h
+                IDs = halos_shell['halo_id']
+
+                
+                h = np.zeros(len(halos_shell['x']),dtype=h_dt)
+                h['ID'] = IDs
+                
+                
+                h['IDhost'] = -1*np.ones(len(IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
+                
+                # we project the halo coordinates
+
+                # print('norm:', norm)
+                h['cov'] = np.sqrt(halos_shell['x']*halos_shell['x'] + halos_shell['y']*halos_shell['y'] + halos_shell['z']*halos_shell['z'])
+                h['x'] = halos_shell['x']
+                h['y'] = halos_shell['y']
+                h['z'] = halos_shell['z']
+                #read Mvir, cvir, rvir
+                h['Mvir'] = masses
+                h['rvir'] = radii
+                h['cvir'] = concentrations
+                
+                halo_shell[i] = h
+            lchalo_file.close()
+            del h#, halos_cosmogrid_old
         else:
-            print("Other halo file formats not supported")
+            LOGGER.critical(f"Other halo file formats not supported. Requested format not recognized: {halo_lc_file_format}")
+            exit()
         
         h_list = [halo_shell[i] for i in shell_id]
         thickness_list = [thickness[i] for i in shell_id]
