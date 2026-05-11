@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from scipy import spatial
 import pickle as pkl
