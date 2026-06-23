@@ -646,14 +646,21 @@ class IO_shell:
                 
                 
                 h['IDhost'] = -1*np.ones(len(IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
-                
-                # we project the halo coordinates
 
-                # print('norm:', norm)
-                h['cov'] = np.sqrt(halos_shell['x']*halos_shell['x'] + halos_shell['y']*halos_shell['y'] + halos_shell['z']*halos_shell['z'])
-                h['x'] = halos_shell['x']
-                h['y'] = halos_shell['y']
-                h['z'] = halos_shell['z']
+                # we project the halo coordinates onto the shell's nominal comoving
+                # distance, same as the CosmoGrid/CosmoGrid_nersc branches above - the
+                # particle mesh built later (particle_worker/subsample_pixels) places
+                # every particle on that same shell_cov sphere, so the halo position
+                # used for 3D distance queries (query_ball_point, NFW mass weighting)
+                # must live on it too, or those queries miss the mesh entirely. h['cov']
+                # keeps the halo's true, un-projected distance for the impact_factor
+                # weighting (how much of the halo's real profile falls in the shell).
+                norm = np.sqrt(halos_shell['x']*halos_shell['x'] + halos_shell['y']*halos_shell['y'] + halos_shell['z']*halos_shell['z'])
+                h['cov'] = norm
+                shell_cov = shell_comoving_dis[i]
+                h['x'] = halos_shell['x'] * shell_cov / norm
+                h['y'] = halos_shell['y'] * shell_cov / norm
+                h['z'] = halos_shell['z'] * shell_cov / norm
                 #read Mvir, cvir, rvir
                 h['Mvir'] = masses
                 h['rvir'] = radii
@@ -669,12 +676,17 @@ class IO_shell:
         h_list = [halo_shell[i] for i in shell_id]
         thickness_list = [thickness[i] for i in shell_id]
         redshift_list = [redshift[i] for i in shell_id]
-        
+        # nominal comoving distance of each shell (shell_info median), independent of
+        # any individual halo's position - halos can sit anywhere within the shell's
+        # thickness (+ buffer for euclid_fs2), so deriving the shell's radius from a
+        # single halo (as displ.py/shell_utils.py used to) is not equivalent to this.
+        shell_cov_list = [shell_comoving_dis[i] for i in shell_id]
+
         if output_shell_info == True:
-            return h_list, thickness_list, redshift_list, shell_info    
-        
+            return h_list, thickness_list, redshift_list, shell_cov_list, shell_info
+
         LOGGER.info(f"Reading lightcone halo done ✅\n")
-        return h_list, thickness_list, redshift_list
+        return h_list, thickness_list, redshift_list, shell_cov_list
 
     def write_shell_file_multicomp(self,gas_shell,dm_shell,star_shell):
         '''

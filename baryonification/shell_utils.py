@@ -1,6 +1,7 @@
 import os, sys
 import healpy as hp
 import numpy as np
+from scipy import spatial
 from time import time
 # Force tqdm to use threading-based locks (no semaphores)
 from tqdm import tqdm
@@ -18,6 +19,37 @@ import pickle as pkl
 import psutil
 
 LOGGER = logger.get_logger(__name__)
+
+def make_run_tag(shell_id):
+    """
+    Unique tag for this SLURM job + shell combination, used to suffix temp
+    filenames in the shared tmp_files directory. Without this, two jobs (or
+    two shells processed by the same job) writing fixed filenames like
+    "p.npy"/"theta.npy" into the same directory would silently stomp on each
+    other if run concurrently. Computed independently by both the writer
+    (master rank) and readers (worker ranks) from the same job env var and
+    shell_id, so no extra value needs to be passed/pickled around.
+    """
+    job_id = os.environ.get('SLURM_JOB_ID', str(os.getpid()))
+    return f"job{job_id}_shell{shell_id}"
+
+def cleanup_job_tmp_files(param):
+    """
+    Remove every temp file this job tagged via make_run_tag(), regardless of
+    which function created it. Intended to run in a finally-block around the
+    whole job so a crash partway through (which skips the normal per-phase
+    cleanup) doesn't leave large files behind in the shared scratch dir.
+    Does not touch the persistent pixel_particles cache (it's untagged by
+    design, meant to be reused across runs).
+    """
+    import glob
+    job_id = os.environ.get('SLURM_JOB_ID', str(os.getpid()))
+    pattern = os.path.join(param.files.tmp_files, f"*job{job_id}*")
+    for fn in glob.glob(pattern):
+        try:
+            os.remove(fn)
+        except OSError as e:
+            LOGGER.warning(f"Could not remove temp file {fn}: {e}")
 
 def arcdistance(distance,radius,param):
     '''Correct distance calculation for low redshift shells'''
@@ -50,12 +82,12 @@ def arcdisplace(displace,position,radius,param):
         return corr_displace  
 
 
-def loop_cpus_subsample_particles(pid, pix_subset, nside, shell_r, halo_pixels_dict, adjacent_halos_dict, h, output_dir):
+def loop_cpus_subsample_particles(pid, pix_subset, nside, shell_r, halo_pixels_dict, adjacent_halos_dict, h, output_dir, run_tag):
 
     # read in large healpix arrays - no need to send them via MPI
-    pixels = np.load(os.path.join(output_dir,"pixels.npy"), mmap_mode="r")
-    halo_map = np.load(os.path.join(output_dir,"halo_map.npy"), mmap_mode="r")
-    neighbor_map = np.load(os.path.join(output_dir,"neighbor_map.npy"), mmap_mode="r")
+    pixels = np.load(os.path.join(output_dir,f"pixels_{run_tag}.npy"), mmap_mode="r")
+    halo_map = np.load(os.path.join(output_dir,f"halo_map_{run_tag}.npy"), mmap_mode="r")
+    neighbor_map = np.load(os.path.join(output_dir,f"neighbor_map_{run_tag}.npy"), mmap_mode="r")
 
     t0 = time()
     local_list = []
@@ -114,7 +146,7 @@ def loop_cpus_subsample_particles(pid, pix_subset, nside, shell_r, halo_pixels_d
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    filename = os.path.join(output_dir, f"particles_local_{pid}.npy")
+    filename = os.path.join(output_dir, f"particles_local_{pid}_{run_tag}.npy")
     arr = np.zeros(len(local_list), dtype=[('pix', 'i4'), ('pos', '3f4'), ('mass', 'f4'), ('tag', 'i4')])
     for i, (pix, pos, mass, tag) in enumerate(local_list):
         arr[i]['pix'] = pix
@@ -159,10 +191,11 @@ def assign_weight(dists, rvir):
 def unpacked_loop(args):
     return loop_cpus_subsample_particles(*args)
 
-def subsample_pixels(nside, pixels, shell_r, halos, param, pool):
+def subsample_pixels(nside, pixels, shell_r, halos, param, pool, shell_id):
     """
     Subsampling pixels around halo centres to improve resolution.
     """
+    run_tag = make_run_tag(shell_id)
     npix = hp.nside2npix(nside)
     halo_pixels_dict = defaultdict(list)
     neighbor_map = np.zeros(npix, dtype=bool)
@@ -210,9 +243,12 @@ def subsample_pixels(nside, pixels, shell_r, halos, param, pool):
     output_dir = param.files.tmp_files
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    np.save(os.path.join(output_dir,"pixels.npy"), pixels)
-    np.save(os.path.join(output_dir,"halo_map.npy"), halo_map)
-    np.save(os.path.join(output_dir,"neighbor_map.npy"), neighbor_map)
+    pixels_fn = os.path.join(output_dir,f"pixels_{run_tag}.npy")
+    halo_map_fn = os.path.join(output_dir,f"halo_map_{run_tag}.npy")
+    neighbor_map_fn = os.path.join(output_dir,f"neighbor_map_{run_tag}.npy")
+    np.save(pixels_fn, pixels)
+    np.save(halo_map_fn, halo_map)
+    np.save(neighbor_map_fn, neighbor_map)
 
     # ---- prepare arguments for MultiPool ----
     nproc = param.shell.N_cpu
@@ -224,10 +260,11 @@ def subsample_pixels(nside, pixels, shell_r, halos, param, pool):
         halo_pixels_dict,
         adjacent_halos_dict,
         h,
-        output_dir)
+        output_dir,
+        run_tag)
         for p in range(nproc)
     ]
- 
+
     LOGGER.info(f"......Launching subsampling with {nproc} processes...")
 
     # ---- Run in parallel ----
@@ -248,6 +285,9 @@ def subsample_pixels(nside, pixels, shell_r, halos, param, pool):
     # remove temp files
     for fn in file_list:
         os.remove(fn)
+    os.remove(pixels_fn)
+    os.remove(halo_map_fn)
+    os.remove(neighbor_map_fn)
 
     keep_fields = ['pos', 'mass', 'tag']
     p_all_filtered = p_all[keep_fields]
@@ -270,13 +310,13 @@ def particle_worker(task,pool):
     mesh_ref == 0: No any subgrid sampling
     mesh_ref == 1: Subgrid sampling following projected NFW profile.
     '''
-    i, pixels, h, param = task
+    i, pixels, h, param, shell_cov = task
+    shell_id = param.shell.min_shell + i
     mesh_ref = param.shell.mesh_ref
     nside = param.shell.nside
-    
+
     LOGGER.info(f"......Subsampling with mesh_ref={mesh_ref}")
-    
-    shell_cov = np.sqrt(h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)
+
     p_dt = np.dtype([("x", '>f8'), ("y", '>f8'), ("z", '>f8'), ("M", '>f4'), ('ref_order', np.uint8)])
 
     if mesh_ref == 0:
@@ -289,7 +329,7 @@ def particle_worker(task,pool):
         p['ref_order'] = 0
 
     elif mesh_ref == 1:
-        sub = subsample_pixels(nside, pixels, shell_cov, h, param, pool)
+        sub = subsample_pixels(nside, pixels, shell_cov, h, param, pool, shell_id)
         p = np.zeros(len(sub), dtype=p_dt)
         p[:]['x'], p[:]['y'], p[:]['z'] = sub['pos'][:,0], sub['pos'][:,1], sub['pos'][:,2]
         p[:]['M'] = sub['mass']
@@ -299,7 +339,8 @@ def particle_worker(task,pool):
     return i, p
 
 
-def get_healpix_map(p, param, star_fraction=None,pool=None):
+def get_healpix_map(p, param, star_fraction=None, pool=None, shell_id=None):
+    run_tag = make_run_tag(shell_id)
     nside      = param.shell.nside
     nside_out  = param.shell.nside_out
     interp     = param.shell.interp
@@ -403,14 +444,18 @@ def get_healpix_map(p, param, star_fraction=None,pool=None):
     # store arrays such that I do not need to pass them as arguments
     LOGGER.debug(f"Storing tmp files for parallel pixelization...")
     output_dir = param.files.tmp_files
-    np.save(os.path.join(output_dir,"theta.npy"), theta)
-    np.save(os.path.join(output_dir,"phi.npy"), phi)
-    np.save(os.path.join(output_dir,"masses.npy"), masses)
-    np.save(os.path.join(output_dir,"ref_order.npy"), p['ref_order'])
+    theta_fn = os.path.join(output_dir,f"theta_{run_tag}.npy")
+    phi_fn = os.path.join(output_dir,f"phi_{run_tag}.npy")
+    masses_fn = os.path.join(output_dir,f"masses_{run_tag}.npy")
+    ref_order_fn = os.path.join(output_dir,f"ref_order_{run_tag}.npy")
+    np.save(theta_fn, theta)
+    np.save(phi_fn, phi)
+    np.save(masses_fn, masses)
+    np.save(ref_order_fn, p['ref_order'])
 
 
     tasks = [
-    (idx_start, idx_end, nside, nside_out, output_dir)
+    (idx_start, idx_end, nside, nside_out, output_dir, run_tag)
     for idx_start, idx_end in chunks
     ]
 
@@ -432,11 +477,11 @@ def get_healpix_map(p, param, star_fraction=None,pool=None):
         os.remove(fname)
 
     LOGGER.debug(f"Cleaning tmp files...")
-    os.remove(os.path.join(output_dir,"theta.npy"))
-    os.remove(os.path.join(output_dir,"phi.npy"))
-    os.remove(os.path.join(output_dir,"masses.npy"))
-    os.remove(os.path.join(output_dir,"ref_order.npy"))
-    
+    os.remove(theta_fn)
+    os.remove(phi_fn)
+    os.remove(masses_fn)
+    os.remove(ref_order_fn)
+
     return final_map.astype(np.float16)
 
 def process_particle_chunk(args):
@@ -445,17 +490,17 @@ def process_particle_chunk(args):
         # memory profiling
         rank = MPI.COMM_WORLD.Get_rank()
         
-        idx_start, idx_end, nside, nside_out, output_dir = args
+        idx_start, idx_end, nside, nside_out, output_dir, run_tag = args
         # LOGGER.debug(f"[process_particle_chunk] pixelizing particles from {idx_start} to {idx_end}")
 
         npix_out = hp.nside2npix(nside_out)
         local_map = np.zeros(npix_out, dtype=np.float32)
 
         # Slice particles
-        theta = np.load(os.path.join(output_dir, "theta.npy"), mmap_mode="r")
-        phi = np.load(os.path.join(output_dir, "phi.npy"), mmap_mode="r")
-        masses = np.load(os.path.join(output_dir, "masses.npy"), mmap_mode="r")
-        pref = np.load(os.path.join(output_dir, "ref_order.npy"), mmap_mode="r")
+        theta = np.load(os.path.join(output_dir, f"theta_{run_tag}.npy"), mmap_mode="r")
+        phi = np.load(os.path.join(output_dir, f"phi_{run_tag}.npy"), mmap_mode="r")
+        masses = np.load(os.path.join(output_dir, f"masses_{run_tag}.npy"), mmap_mode="r")
+        pref = np.load(os.path.join(output_dir, f"ref_order_{run_tag}.npy"), mmap_mode="r")
         ref_order = pref[idx_start:idx_end]
         th_all = theta[idx_start:idx_end]
         ph_all = phi[idx_start:idx_end]
@@ -518,7 +563,7 @@ def process_particle_chunk(args):
 
             # LOGGER.debug(f"rank {rank}, stamp 7")
 
-        fname = os.path.join(output_dir, f"local_map_{rank}.npy")
+        fname = os.path.join(output_dir, f"local_map_{rank}_{run_tag}.npy")
         np.save(fname, local_map.astype(np.float32))
         del local_map
         gc.collect()
@@ -614,6 +659,9 @@ def sphere_intersection_volume(r1, r2, d):
 
 
 def impact_factor(rbin, h_cov, shell_cov, thickness):
+    """
+    rbin
+    """
 
     r_in = shell_cov - thickness / 2
     r_out = shell_cov + thickness / 2
@@ -690,6 +738,70 @@ def maybe_progressbar(iterable, total, desc):
         return LOGGER.progressbar(iterable, total=total, desc=desc, at_level="debug")
     return iterable
 
+def save_cKDTree_shared(tree, output_dir, prefix="p_tree", large_array_threshold=1_000_000):
+    """
+    Save a cKDTree's pickle state as one file per large internal array (data,
+    indices, the packed node buffer, ...) plus one small pickle for the rest,
+    instead of a single pickle blob. Lets workers mmap the large arrays (see
+    load_cKDTree_shared) so they share physical pages on the same node rather
+    than each unpickling a private full-size copy.
+    Returns the list of files written, for cleanup later.
+    """
+    state = tree.__getstate__()
+    meta = []
+    written = []
+    for i, item in enumerate(state):
+        if isinstance(item, np.ndarray) and item.nbytes > large_array_threshold:
+            fname = os.path.join(output_dir, f"{prefix}_arr_{i}.npy")
+            np.save(fname, item)
+            written.append(fname)
+            meta.append(('arr', i))
+        else:
+            meta.append(('val', item))
+    meta_fname = os.path.join(output_dir, f"{prefix}_meta.pkl")
+    with open(meta_fname, "wb") as f:
+        pkl.dump(meta, f)
+    written.append(meta_fname)
+    return written
+
+def load_cKDTree_shared(output_dir, prefix="p_tree"):
+    """
+    Reconstruct a cKDTree saved by save_cKDTree_shared, with its large internal
+    arrays memory-mapped read-only rather than copied into private memory.
+    """
+    meta_fname = os.path.join(output_dir, f"{prefix}_meta.pkl")
+    with open(meta_fname, "rb") as f:
+        meta = pkl.load(f)
+    state = []
+    for kind, payload in meta:
+        if kind == 'arr':
+            fname = os.path.join(output_dir, f"{prefix}_arr_{payload}.npy")
+            state.append(np.load(fname, mmap_mode='r'))
+        else:
+            state.append(payload)
+    tree = spatial.cKDTree.__new__(spatial.cKDTree)
+    tree.__setstate__(tuple(state))
+    return tree
+
+def consolidate_sparse_contributions(idx_chunks, value_chunks_dict):
+    """
+    Combine many small (idx_array, value_array) contributions - e.g. one pair per
+    halo touching a handful of particles - into a single set of unique indices with
+    summed values per field, without ever materializing a full shell-sized array.
+    idx_chunks: list of 1D int arrays
+    value_chunks_dict: dict field_name -> list of 1D arrays, aligned with idx_chunks
+    """
+    if not idx_chunks:
+        empty_idx = np.array([], dtype=np.int64)
+        return empty_idx, {k: np.array([], dtype=np.float64) for k in value_chunks_dict}
+    all_idx = np.concatenate(idx_chunks)
+    unique_idx, inverse = np.unique(all_idx, return_inverse=True)
+    summed = {}
+    for field, chunks in value_chunks_dict.items():
+        all_val = np.concatenate(chunks)
+        summed[field] = np.bincount(inverse, weights=all_val, minlength=len(unique_idx))
+    return unique_idx, summed
+
 def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, output_dir):
     """
     Top-level function version of the original class method 'loop_halo_chunks'
@@ -718,14 +830,14 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
 
     shell_id, thickness, redshift, param = task
     shell_cov, var_tck, bias_tck, corr_tck = args_for_loop_halo_chunks
-    
+    run_tag = make_run_tag(shell_id)
+
     LOGGER.debug(f'......loading precomputed data: p...')
-    p = np.load(os.path.join(output_dir,"p.npy"), mmap_mode='r')  # load p to a file to avoid pickling issues
+    p = np.load(os.path.join(output_dir,f"p_{run_tag}.npy"), mmap_mode='r')  # load p to a file to avoid pickling issues
     LOGGER.debug(f'......loading precomputed data: h...')
-    h = np.load(os.path.join(output_dir,"h.npy"), mmap_mode='r')  # load p to a file to avoid pickling issues
+    h = np.load(os.path.join(output_dir,f"h_{run_tag}.npy"), mmap_mode='r')  # load p to a file to avoid pickling issues
     LOGGER.debug(f'......loading precomputed data: p_tree...')
-    with open(os.path.join(output_dir,"p_tree.pkl"), "rb") as f:
-        p_tree = pkl.load(f)
+    p_tree = load_cKDTree_shared(output_dir, prefix=f"p_tree_{run_tag}")
     # sys.exit()
     profiles = Profiles(None, 1e13, None, None, None, None, param)
 
@@ -733,18 +845,28 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
     # we do not modify p here, jsut read out the coordinates - so we do not need to copy
     p_darkmatter = p
     p_baryons = p if param.code.multicomp else None
-    n_p = len(p)
     LOGGER.debug(f'......process {i_cpu} loaded all precomputed data.')
 
     if param.code.multicomp:
-        # Setup arrays for baryons and DM
-        Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),
-                            ("id",'>f4'),("rho2D_star_at_xyz",'>f4'),("rho2D_bar_at_xyz",'>f4')])
-        DpBAR = np.zeros(n_p, dtype=Dp_type)
-        DpFDM = np.zeros(n_p, dtype=Dp_type)
+        # Sparse accumulators: each halo appends an (idx, value) event instead of
+        # writing into a dense n_p-sized array, so a worker's memory scales with the
+        # particles its own halo subset actually touches, not with the whole shell.
+        fdm_idx_chunks, fdm_x_chunks, fdm_y_chunks, fdm_z_chunks = [], [], [], []
+        bar_idx_chunks, bar_x_chunks, bar_y_chunks, bar_z_chunks = [], [], [], []
+        star_idx_chunks, star_val_chunks, bar2D_val_chunks = [], [], []
+        n_host_halos = 0
+        n_displaced = 0  # host halos that actually found particles within rball, i.e.
+                          # halos that contributed any displacement to DpBAR/DpFDM
+        n_bar_superpixel = 0  # host halos whose max|DBAR| exceeds one output pixel's
+                               # physical size, i.e. the baryon displacement is large
+                               # enough to actually move particles into a different pixel
+        # physical size of one output pixel at this shell's distance - constant for the
+        # whole shell, so compute it once instead of inside the per-halo loop
+        pixel_size = hp.nside2resol(param.shell.nside_out) * shell_cov
 
         for j in maybe_progressbar(idx_local, total=len(idx_local), desc=f"Process {i_cpu}: Loop over halo subset"):
             if h['IDhost'][j] < 0:
+                n_host_halos += 1
                 # Extract halo data
                 hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
                 h_cov = h['cov'][j]
@@ -778,6 +900,28 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                 DBAR = displ(rbin, projected_MBAR_i, projected_MBAR_f)
                 DFDM = displ(rbin, projected_MDM_i, projected_MDM_f)
 
+                # tally every halo (not just the j%10 sample below) so the final count
+                # is exact: is this halo's baryon displacement even large enough to move
+                # particles into a different pixel? (sub-pixel displacement => no visible
+                # change in the gas/dm difference map regardless of how different DBAR/DFDM are)
+                max_DBAR = np.max(np.abs(DBAR))
+                max_DFDM = np.max(np.abs(DFDM))
+                if max_DBAR > pixel_size:
+                    n_bar_superpixel += 1
+
+                do_diag = (j % 10 == 0)
+                if do_diag:
+                    LOGGER.debug(
+                        f"......[diag] halo j={j} Mvir={Mvir:.3e} rvir={rvir:.4f} cvir={cvir:.3f} "
+                        f"cosmo_var={cosmo_var:.4e} cosmo_bias={cosmo_bias:.4e} "
+                        f"fcdm={frac['CDM']:.4f} fhga={frac['HGA']:.4f} fcga={frac['CGA']:.6f} "
+                        f"fsga={frac['SGA']:.6f} figa={frac['IGA']:.6f} "
+                        f"pixel_size={pixel_size:.6e} Mpc/h "
+                        f"max|DBAR|={max_DBAR:.6e} (>pixel? {max_DBAR > pixel_size}) "
+                        f"max|DFDM|={max_DFDM:.6e} (>pixel? {max_DFDM > pixel_size}) "
+                        f"max|DBAR-DFDM|={np.max(np.abs(DBAR-DFDM)):.6e}"
+                    )
+
                 # Compute impact factors
                 V_overlap_ov_tot = impact_factor(rbin, h_cov, shell_cov, thickness)
 
@@ -786,6 +930,15 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                 rhoBAR = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
                 corrFDM = np.trapz(rbin**2 * V_overlap_ov_tot * rhoCDM, rbin)/np.trapz(rbin**2 * rhoCDM, rbin)
                 corrBAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoBAR, rbin)/np.trapz(rbin**2 * rhoBAR, rbin)
+
+                if do_diag:
+                    LOGGER.debug(
+                        f"......[diag-corr] halo j={j} h_cov={h_cov:.6e} shell_cov={shell_cov:.6e} "
+                        f"thickness={thickness:.6e} |h_cov-shell_cov|={abs(h_cov-shell_cov):.6e} Mpc/h "
+                        f"corrBAR={corrBAR:.6e} corrFDM={corrFDM:.6e} "
+                        f"max|DBAR|_postcorr={np.max(np.abs(DBAR*corrBAR)):.6e}"
+                    )
+
                 DBAR *= corrBAR
                 DFDM *= corrFDM
 
@@ -822,7 +975,16 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                 ipbool = np.array(p_tree.query_ball_point((hx,hy,hz),rball))
                 # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
 
+                if do_diag:
+                    LOGGER.debug(
+                        f"......[diag-rball] halo j={j} smallestD={smallestD:.4e} Mpc/h "
+                        f"len(idx_BAR)={len(idx_BAR)} rball_BAR={rball_BAR:.6e} "
+                        f"len(idx_FDM)={len(idx_FDM)} rball_FDM={rball_FDM:.6e} "
+                        f"rball(euclid)={rball:.6e} Mpc/h n_particles_in_ball={len(ipbool)}"
+                    )
+
                 if (len(ipbool) > 0):
+                    n_displaced += 1
                     #calculating radii of FDM particles around halo j
                     rpFDM  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
                             (p_darkmatter['y'][ipbool]-hy)**2.0 +
@@ -864,36 +1026,42 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                         rpBAR_wo_nbrhaloes = arcdistance(rpBAR_wo_nbrhaloes,shell_cov,param)
 
                         DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                        DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                        DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                        DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+                        fdm_idx_chunks.append(ipbool)
+                        fdm_x_chunks.append((p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM)
+                        fdm_y_chunks.append((p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM)
+                        fdm_z_chunks.append((p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM)
 
                         if(len(rpBAR_nbrhaloes)>0):
                             DrpBAR_nbrhaloes    = splev(rpBAR_nbrhaloes,DFDM_tck,der=0,ext=1)
                             DrpBAR_wo_nbrhaloes = splev(rpBAR_wo_nbrhaloes,DBAR_tck,der=0,ext=1)
-                            DpBAR['x'][ipbool_nbrhaloes] += (p_baryons['x'][ipbool_nbrhaloes]-hx)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['y'][ipbool_nbrhaloes] += (p_baryons['y'][ipbool_nbrhaloes]-hy)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['z'][ipbool_nbrhaloes] += (p_baryons['z'][ipbool_nbrhaloes]-hz)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes
-                            DpBAR['x'][ipbool_wo_nbrhaloes] += (p_baryons['x'][ipbool_wo_nbrhaloes]-hx)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['y'][ipbool_wo_nbrhaloes] += (p_baryons['y'][ipbool_wo_nbrhaloes]-hy)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
-                            DpBAR['z'][ipbool_wo_nbrhaloes] += (p_baryons['z'][ipbool_wo_nbrhaloes]-hz)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes
+                            bar_idx_chunks.append(ipbool_nbrhaloes)
+                            bar_x_chunks.append((p_baryons['x'][ipbool_nbrhaloes]-hx)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes)
+                            bar_y_chunks.append((p_baryons['y'][ipbool_nbrhaloes]-hy)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes)
+                            bar_z_chunks.append((p_baryons['z'][ipbool_nbrhaloes]-hz)*DrpBAR_nbrhaloes/rpBAR_nbrhaloes)
+                            bar_idx_chunks.append(ipbool_wo_nbrhaloes)
+                            bar_x_chunks.append((p_baryons['x'][ipbool_wo_nbrhaloes]-hx)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes)
+                            bar_y_chunks.append((p_baryons['y'][ipbool_wo_nbrhaloes]-hy)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes)
+                            bar_z_chunks.append((p_baryons['z'][ipbool_wo_nbrhaloes]-hz)*DrpBAR_wo_nbrhaloes/rpBAR_wo_nbrhaloes)
                         else:
                             DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
-                            DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
-                            DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
-                            DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
-                            
+                            bar_idx_chunks.append(ipbool)
+                            bar_x_chunks.append((p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR)
+                            bar_y_chunks.append((p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR)
+                            bar_z_chunks.append((p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR)
+
                     elif param.shell.nbrhalo == 0:
-                        
+
                         DrpBAR = splev(rpBAR,DBAR_tck,der=0,ext=1)
-                        DpBAR['x'][ipbool] += (p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR
-                        DpBAR['y'][ipbool] += (p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR
-                        DpBAR['z'][ipbool] += (p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR
+                        bar_idx_chunks.append(ipbool)
+                        bar_x_chunks.append((p_baryons['x'][ipbool]-hx)*DrpBAR/rpBAR)
+                        bar_y_chunks.append((p_baryons['y'][ipbool]-hy)*DrpBAR/rpBAR)
+                        bar_z_chunks.append((p_baryons['z'][ipbool]-hz)*DrpBAR/rpBAR)
 
                         DrpFDM = splev(rpFDM,DFDM_tck,der=0,ext=1)
-                        DpFDM['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM
-                        DpFDM['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM
-                        DpFDM['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM
+                        fdm_idx_chunks.append(ipbool)
+                        fdm_x_chunks.append((p_darkmatter['x'][ipbool]-hx)*DrpFDM/rpFDM)
+                        fdm_y_chunks.append((p_darkmatter['y'][ipbool]-hy)*DrpFDM/rpFDM)
+                        fdm_z_chunks.append((p_darkmatter['z'][ipbool]-hz)*DrpFDM/rpFDM)
 
                     #separate baryons into gas and stars                  
                     #probabilities
@@ -949,33 +1117,70 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
 
                     if param.shell.nbrhalo==1:
                         if (len(rpBAR_nbrhaloes) > 0):
-                            DpBAR['rho2D_star_at_xyz'][ipbool_wo_nbrhaloes] = rho2D_star
-                            DpBAR['rho2D_bar_at_xyz'][ipbool_wo_nbrhaloes]  = rho2D_bar
+                            star_idx_chunks.append(ipbool_wo_nbrhaloes)
+                            star_val_chunks.append(rho2D_star)
+                            bar2D_val_chunks.append(rho2D_bar)
                         else:
-                            DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
-                            DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
-                            #DpBAR['rho2D_bar_at_xyz'][ipbool] = np.clip(DpBAR['rho2D_bar_at_xyz'][ipbool], a_min=0.0, a_max=1.0)
+                            star_idx_chunks.append(ipbool)
+                            star_val_chunks.append(rho2D_star)
+                            bar2D_val_chunks.append(rho2D_bar)
                     elif param.shell.nbrhalo == 0:
-                        DpBAR['rho2D_star_at_xyz'][ipbool] += rho2D_star
-                        DpBAR['rho2D_bar_at_xyz'][ipbool]  += rho2D_bar
+                        star_idx_chunks.append(ipbool)
+                        star_val_chunks.append(rho2D_star)
+                        bar2D_val_chunks.append(rho2D_bar)
+
+        # Consolidate this worker's sparse contributions (sized to the particles its
+        # own halo subset touched, not to the full shell) before writing to disk.
+        fdm_idx, fdm_vals = consolidate_sparse_contributions(
+            fdm_idx_chunks, {'x': fdm_x_chunks, 'y': fdm_y_chunks, 'z': fdm_z_chunks})
+        bar_idx, bar_vals = consolidate_sparse_contributions(
+            bar_idx_chunks, {'x': bar_x_chunks, 'y': bar_y_chunks, 'z': bar_z_chunks})
+        star_idx, star_vals = consolidate_sparse_contributions(
+            star_idx_chunks, {'rho2D_star_at_xyz': star_val_chunks, 'rho2D_bar_at_xyz': bar2D_val_chunks})
+
+        # DpBAR needs both the xyz displacement and the star/gas split, which can be
+        # keyed to slightly different particle sets (nbrhalo==1) - merge onto their union.
+        bar_union_idx = np.union1d(bar_idx, star_idx)
+        DpBAR_sparse_type = np.dtype([("idx",'<i8'),("x",'>f'),("y",'>f'),("z",'>f'),
+                                       ("rho2D_star_at_xyz",'>f4'),("rho2D_bar_at_xyz",'>f4')])
+        DpBAR = np.zeros(len(bar_union_idx), dtype=DpBAR_sparse_type)
+        DpBAR['idx'] = bar_union_idx
+        pos_bar = np.searchsorted(bar_union_idx, bar_idx)
+        DpBAR['x'][pos_bar] = bar_vals['x']
+        DpBAR['y'][pos_bar] = bar_vals['y']
+        DpBAR['z'][pos_bar] = bar_vals['z']
+        pos_star = np.searchsorted(bar_union_idx, star_idx)
+        DpBAR['rho2D_star_at_xyz'][pos_star] = star_vals['rho2D_star_at_xyz']
+        DpBAR['rho2D_bar_at_xyz'][pos_star] = star_vals['rho2D_bar_at_xyz']
+
+        DpFDM_sparse_type = np.dtype([("idx",'<i8'),("x",'>f'),("y",'>f'),("z",'>f')])
+        DpFDM = np.zeros(len(fdm_idx), dtype=DpFDM_sparse_type)
+        DpFDM['idx'] = fdm_idx
+        DpFDM['x'] = fdm_vals['x']
+        DpFDM['y'] = fdm_vals['y']
+        DpFDM['z'] = fdm_vals['z']
 
         # Save temporary results
-        filenameDpBAR = f'{output_dir}/DpBAR_shell_{shell_id}_cpu_{i_cpu}.npy'
-        filenameDrpFDM = f'{output_dir}/DrpFDM_shell_{shell_id}_cpu_{i_cpu}.npy'
+        filenameDpBAR = f'{output_dir}/DpBAR_{run_tag}_cpu_{i_cpu}.npy'
+        filenameDrpFDM = f'{output_dir}/DrpFDM_{run_tag}_cpu_{i_cpu}.npy'
         np.save(filenameDpBAR, DpBAR)
         np.save(filenameDrpFDM, DpFDM)
 
+        LOGGER.info(f'......process {i_cpu}: {n_displaced}/{n_host_halos} host halos had particles within rball and were displaced (contributed to DpBAR/DpFDM).')
+        LOGGER.info(f'......process {i_cpu}: {n_bar_superpixel}/{n_host_halos} host halos had max|DBAR| larger than one output pixel.')
         LOGGER.debug(f'Process {i_cpu} done. Elapsed time: {time()-ts:.2f} s')
-        return filenameDpBAR, filenameDrpFDM
+        return filenameDpBAR, filenameDrpFDM, n_displaced, n_bar_superpixel
 
     else:
-        # Single-component routine (similar)
-        Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f')])
-        Dp = np.zeros(n_p, dtype=Dp_type)
+        # Single-component routine (similar), sparse accumulation as above.
+        dmb_idx_chunks, dmb_x_chunks, dmb_y_chunks, dmb_z_chunks = [], [], [], []
+        n_host_halos = 0
+        n_displaced = 0  # host halos that actually found particles within rball
 
         for j in maybe_progressbar(idx_local, total=len(idx_local), desc=f"Process {i_cpu}: Loop over halo subset"):
             #select host haloes (subhaloes >= 1)
             if (h['IDhost'][j] < 0):
+                n_host_halos += 1
                 hx, hy, hz = h['x'][j], h['y'][j], h['z'][j]
                 h_cov = h['cov'][j]
                 Mvir, rvir, cvir = h['Mvir'][j], h['rvir'][j], h['cvir'][j]
@@ -1039,6 +1244,7 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                 # print("Halo centre, surrounding particle number = ", hx,hy,hz, len(ipbool))
 
                 if (len(ipbool) > 0):
+                    n_displaced += 1
                     #calculating radii of FDM particles around halo j
                     rpDMB  = ((p_darkmatter['x'][ipbool]-hx)**2.0 +
                             (p_darkmatter['y'][ipbool]-hy)**2.0 +
@@ -1046,13 +1252,24 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                     rpDMB = arcdistance(rpDMB,shell_cov,param)
 
                     DrpDMB = splev(rpDMB,DDMB_tck,der=0,ext=1)
-                    Dp['x'][ipbool] += (p_darkmatter['x'][ipbool]-hx)*DrpDMB/rpDMB
-                    Dp['y'][ipbool] += (p_darkmatter['y'][ipbool]-hy)*DrpDMB/rpDMB
-                    Dp['z'][ipbool] += (p_darkmatter['z'][ipbool]-hz)*DrpDMB/rpDMB
+                    dmb_idx_chunks.append(ipbool)
+                    dmb_x_chunks.append((p_darkmatter['x'][ipbool]-hx)*DrpDMB/rpDMB)
+                    dmb_y_chunks.append((p_darkmatter['y'][ipbool]-hy)*DrpDMB/rpDMB)
+                    dmb_z_chunks.append((p_darkmatter['z'][ipbool]-hz)*DrpDMB/rpDMB)
 
-        filenameDrpDMB = f'{output_dir}/DrpDMB_shell_{shell_id}_cpu_{i_cpu}.npy'
+        dmb_idx, dmb_vals = consolidate_sparse_contributions(
+            dmb_idx_chunks, {'x': dmb_x_chunks, 'y': dmb_y_chunks, 'z': dmb_z_chunks})
+        Dp_sparse_type = np.dtype([("idx",'<i8'),("x",'>f'),("y",'>f'),("z",'>f')])
+        Dp = np.zeros(len(dmb_idx), dtype=Dp_sparse_type)
+        Dp['idx'] = dmb_idx
+        Dp['x'] = dmb_vals['x']
+        Dp['y'] = dmb_vals['y']
+        Dp['z'] = dmb_vals['z']
+
+        filenameDrpDMB = f'{output_dir}/DrpDMB_{run_tag}_cpu_{i_cpu}.npy'
         np.save(filenameDrpDMB, Dp)
-        return "None", filenameDrpDMB
+        LOGGER.info(f'......process {i_cpu}: {n_displaced}/{n_host_halos} host halos had particles within rball and were displaced.')
+        return "None", filenameDrpDMB, n_displaced
 
 
 def displ(rbin, MINITIAL, MFINAL):
@@ -1065,62 +1282,54 @@ def displ(rbin, MINITIAL, MFINAL):
     DFINAL = rFINAL - rbin
     return DFINAL
 
-def sum_structured_arrays_from_files_singlecomp(filenames):
+def sum_structured_arrays_from_files_singlecomp(filenames, n_p):
     """
-    Sum 'x', 'y', 'z', 'id' fields from a list of .npy structured arrays,
-    opening one file at a time to minimize open file count and memory use.
+    Scatter-add the sparse (idx, x, y, z) contributions from each worker's file into
+    a single n_p-sized dense array, opening one (now small, sparse) file at a time.
     """
     if not filenames:
         raise ValueError("Empty file list")
 
-    # Initialize accumulator with zeros like the first file
-    first = np.load(filenames[0])
-    out = np.zeros_like(first)
-    out["x"] += first["x"]
-    out["y"] += first["y"]
-    out["z"] += first["z"]
-    del first
+    Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f')])
+    out = np.zeros(n_p, dtype=Dp_type)
 
-    # Loop through remaining files one by one
-    for fn in filenames[1:]:
+    for fn in filenames:
         arr = np.load(fn)
-        out["x"] += arr["x"]
-        out["y"] += arr["y"]
-        out["z"] += arr["z"]
+        idx = arr["idx"]
+        np.add.at(out["x"], idx, arr["x"])
+        np.add.at(out["y"], idx, arr["y"])
+        np.add.at(out["z"], idx, arr["z"])
         del arr
 
     for fn in filenames:
         os.remove(fn)
     return out
 
-def sum_structured_arrays_from_files_multicomp(filenames):
+def sum_structured_arrays_from_files_multicomp(filenames, n_p):
     """
-    Sum 'x', 'y', 'z', 'id' fields from a list of .npy structured arrays,
-    opening one file at a time to minimize open file count and memory use.
+    Scatter-add the sparse (idx, x, y, z, rho2D_star_at_xyz, rho2D_bar_at_xyz)
+    contributions from each worker's file into a single n_p-sized dense array,
+    opening one (now small, sparse) file at a time.
     """
     if not filenames:
         raise ValueError("Empty file list")
 
-    # Initialize accumulator with zeros like the first file
-    first = np.load(filenames[0])
-    out = np.zeros_like(first)
-    out["x"] += first["x"]
-    out["y"] += first["y"]
-    out["z"] += first["z"]
-    out["rho2D_star_at_xyz"] += first["rho2D_star_at_xyz"]
-    out["rho2D_bar_at_xyz"]  += first["rho2D_bar_at_xyz"]
-    del first
+    Dp_type = np.dtype([("x",'>f'),("y",'>f'),("z",'>f'),
+                         ("id",'>f4'),("rho2D_star_at_xyz",'>f4'),("rho2D_bar_at_xyz",'>f4')])
+    out = np.zeros(n_p, dtype=Dp_type)
 
-    # Loop through remaining files one by one
-    
-    # for fn in filenames[1:]:
-    for fn in maybe_progressbar(filenames[1:] ,total = len(filenames[1:]), desc = f"Loop over displacement files"):
+    for fn in maybe_progressbar(filenames ,total = len(filenames), desc = f"Loop over displacement files"):
         arr = np.load(fn)
-        out["x"] += arr["x"]
-        out["y"] += arr["y"]
-        out["z"] += arr["z"]
-        out["rho2D_star_at_xyz"] += arr["rho2D_star_at_xyz"]
-        out["rho2D_bar_at_xyz"]  += arr["rho2D_bar_at_xyz"]
+        idx = arr["idx"]
+        np.add.at(out["x"], idx, arr["x"])
+        np.add.at(out["y"], idx, arr["y"])
+        np.add.at(out["z"], idx, arr["z"])
+        # DpFDM's sparse files (DpFDM_sparse_type) carry no rho2D_* fields - only
+        # DpBAR's do, so only scatter-add them when present (this function is shared
+        # between both bar_filenames and dm_filenames callers).
+        if "rho2D_star_at_xyz" in arr.dtype.names:
+            np.add.at(out["rho2D_star_at_xyz"], idx, arr["rho2D_star_at_xyz"])
+            np.add.at(out["rho2D_bar_at_xyz"], idx, arr["rho2D_bar_at_xyz"])
         del arr
 
     # LOGGER.debug(f"minmax {np.min(out['rho2D_bar_at_xyz'])}, {np.max(out['rho2D_bar_at_xyz'])}")

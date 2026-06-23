@@ -681,37 +681,42 @@ class ShellDisplacer:
                 pool.wait()
                 sys.exit(0)
 
-            
-            LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
-            
-            io_shell = IO_shell(self.param)
-            h_list, thickness_list, redshift_list = io_shell.read_halo_lc_file()
-            shell_id, map_list = io_shell.read_healpix_file()
-            
-            p_list = self.perform_get_particle(map_list, h_list, pool)
-            del map_list
-            
-            if (self.param.code.multicomp == True):
-                gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, pool)
-                io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
-            elif (self.param.code.multicomp == False):
-                dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, pool)
-                io_shell.write_shell_file_singlecomp(dmb_shell)
-            else:
-                LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
-                exit()
-            
+            try:
+                LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
+
+                io_shell = IO_shell(self.param)
+                h_list, thickness_list, redshift_list, shell_cov_list = io_shell.read_halo_lc_file()
+                shell_id, map_list = io_shell.read_healpix_file()
+
+                p_list = self.perform_get_particle(map_list, h_list, shell_cov_list, pool)
+                del map_list
+
+                if (self.param.code.multicomp == True):
+                    gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool)
+                    io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
+                elif (self.param.code.multicomp == False):
+                    dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool)
+                    io_shell.write_shell_file_singlecomp(dmb_shell)
+                else:
+                    LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
+                    exit()
+            finally:
+                # safety net: removes every temp file tagged with this job's SLURM_JOB_ID,
+                # even if an exception above skipped the normal per-phase cleanup
+                LOGGER.info(f"Cleaning up any remaining temporary files for this job...")
+                cleanup_job_tmp_files(self.param)
+
         return 0
 
-    def perform_get_particle(self, map_list, h_list, pool):
+    def perform_get_particle(self, map_list, h_list, shell_cov_list, pool):
         """
         Convert map to particles, parallelized.
         """
         num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
         if num_shells != len(map_list):
             raise ValueError(f"Mismatch: {len(map_list)} shells but num_shells={num_shells}")
-            
-        tasks = [(i, map_list[i], h_list[i], self.param) for i in range(num_shells)]
+
+        tasks = [(i, map_list[i], h_list[i], self.param, shell_cov_list[i]) for i in range(num_shells)]
         
         output_dir = self.param.files.tmp_files
         results = []
@@ -740,14 +745,14 @@ class ShellDisplacer:
         particle_shell = {i: p for i, p in results}
         return [particle_shell[i] for i in sorted(particle_shell.keys())]
 
-    def displace_shell(self, shell_id, p_list, redshift_list, h_list, thickness_list, pool, test=False):
+    def displace_shell(self, shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool, test=False):
         '''
         displace particles on the shell with the halo file
         '''
         LOGGER.info(f"Displacing shells...")
         num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
-        
-        tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, np.repeat(self.param,num_shells)))
+
+        tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, shell_cov_list, np.repeat(self.param,num_shells)))
 
         if (self.param.code.multicomp == True):
             
@@ -793,10 +798,8 @@ class ShellDisplacer:
         '''
         cosmo_calculator = CosmoCalculator(self.param)
 
-        shell_id, h, thickness, p, redshift, param = task
-        
-        shell_cov = (h['x'][0]**2 + h['y'][0]**2 + h['z'][0]**2)**0.5
-    
+        shell_id, h, thickness, p, redshift, shell_cov, param = task
+
         param.cosmo.z = redshift
 
         vc_r, vc_m, vc_var, vc_bias, vc_corr = cosmo_calculator.compute_cosmology()
@@ -826,8 +829,6 @@ class ShellDisplacer:
         gl_start = time()
 
         nproc = min(param.shell.N_cpu - 1, len(h["Mvir"]))
-        if param.files.halolc_format == "euclid_fs2":
-            nproc = min(param.shell.N_cpu, len(h["Mvir"]),8)
         if nproc == 0:
             # the above condition is valid for parallel jobs
             nproc += 1
@@ -837,6 +838,7 @@ class ShellDisplacer:
         idx = np.arange(len(h["Mvir"]))
 
         output_dir = self.param.files.tmp_files
+        run_tag = make_run_tag(shell_id)
         # store px,py,pz to be used by MPI tasks
         fields = ['x','y','z']
         new_dtype = np.dtype([(f, p[f].dtype) for f in fields])
@@ -845,10 +847,13 @@ class ShellDisplacer:
         # Copy the requested fields
         for f in fields:
             p_coords[f] = p[f]
-        np.save(os.path.join(output_dir,"p.npy"), p_coords)  # save p to a file to avoid pickling issues
-        np.save(os.path.join(output_dir,"h.npy"), h)  # save p to a file to avoid pickling issues
-        with open(os.path.join(output_dir,"p_tree.pkl"), "wb") as f:
-            pkl.dump(p_tree, f)
+        p_fn = os.path.join(output_dir,f"p_{run_tag}.npy")
+        h_fn = os.path.join(output_dir,f"h_{run_tag}.npy")
+        np.save(p_fn, p_coords)  # save p to a file to avoid pickling issues
+        np.save(h_fn, h)  # save p to a file to avoid pickling issues
+        # save the tree's large internal arrays as separate mmap-able files so workers
+        # share the same physical pages instead of each unpickling a private full copy
+        p_tree_files = save_cKDTree_shared(p_tree, output_dir, prefix=f"p_tree_{run_tag}")
 
         # prepare argument list
         args_for_loop_halo_chunks = [shell_cov, var_tck, bias_tck, corr_tck]
@@ -865,15 +870,23 @@ class ShellDisplacer:
 
         gl_end = time()
         LOGGER.info(f"......Looping over halos done. Ellapsed time: {gl_end - gl_start:.3f}")
-        
+
+        n_host_total = int(np.count_nonzero(h["IDhost"] < 0))
+        n_displaced_total = sum(r[2] for r in results)
+        LOGGER.info(f"......{n_displaced_total}/{n_host_total} host halos were displaced (had particles within rball and contributed to the displacement maps).")
+        if param.code.multicomp:
+            n_bar_superpixel_total = sum(r[3] for r in results)
+            LOGGER.info(f"......{n_bar_superpixel_total}/{n_host_total} host halos had max|DBAR| larger than one output pixel (the rest displace baryons by less than a pixel, so the gas/dm difference map can't show them).")
+
         LOGGER.info(f"......Cleaning up temporary files (tree, particles, h)")
-        os.remove(os.path.join(output_dir,"p.npy"))
-        os.remove(os.path.join(output_dir,"h.npy"))
-        os.remove(os.path.join(output_dir,"p_tree.pkl"))
+        os.remove(p_fn)
+        os.remove(h_fn)
+        for fn in p_tree_files:
+            os.remove(fn)
 
         LOGGER.info(f"......Splitting particles to dm and baryons...")
 
-        # results = [(DpBAR_part, DpFDM_part), ...]
+        # results = [(DpBAR_part, DpFDM_part, n_displaced), ...]
         bar_filenames = [r[0] for r in results]
         dm_filenames = [r[1] for r in results]
 
@@ -893,8 +906,8 @@ class ShellDisplacer:
         LOGGER.info(f"......Summing displacements...")
         
         if (self.param.code.multicomp == True):
-            DpBAR = sum_structured_arrays_from_files_multicomp(bar_filenames)
-            DpFDM = sum_structured_arrays_from_files_multicomp(dm_filenames)
+            DpBAR = sum_structured_arrays_from_files_multicomp(bar_filenames, n_p)
+            DpFDM = sum_structured_arrays_from_files_multicomp(dm_filenames, n_p)
             
             t_sum = time()
             LOGGER.info(f"......Summing displacements done. Ellapsed time: {t_sum - t_split:.3f}s")
@@ -924,14 +937,14 @@ class ShellDisplacer:
             t = time()
             #convert position to healpix index and store the data
             LOGGER.info(f"......Converting particles to healpix maps...")
-            shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'], pool = pool)
-            shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool)
-            shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'], pool = pool)
+            shell_gas = get_healpix_map(p_baryons,param, star_fraction=DpBAR['id'], pool = pool, shell_id=shell_id)
+            shell_dm = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool, shell_id=shell_id)
+            shell_star = get_healpix_map(p_baryons,param, star_fraction=1-DpBAR['id'], pool = pool, shell_id=shell_id)
             LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds")
             return shell_id, shell_gas, shell_dm, shell_star
         
         elif (self.param.code.multicomp == False):
-            Dp = sum_structured_arrays_from_files_singlecomp(dm_filenames)
+            Dp = sum_structured_arrays_from_files_singlecomp(dm_filenames, n_p)
             
             t_sum = time()
             LOGGER.info(f"......Summing displacements done. Ellapsed time: {t_sum - t_split:.3f}s")
@@ -953,7 +966,7 @@ class ShellDisplacer:
             t = time()
             #convert position to healpix index and store the data
             LOGGER.info(f"......Converting particles to healpix maps...")
-            shell_dmb = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool)
+            shell_dmb = get_healpix_map(p_darkmatter,param, star_fraction=None, pool = pool, shell_id=shell_id)
             LOGGER.info(f"......Converting particles to healpix maps done. Ellapsed time: {time()-t:.3f} seconds")
             return shell_id, shell_dmb
         
