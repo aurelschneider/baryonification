@@ -623,51 +623,54 @@ class IO_shell:
                 cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
                                       h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
                 
-            for i in shell_id:
-                self.param.cosmo.z = redshift[i]
-                halos = lchalo_file["halos"]
-                #is buffer region included
-                # select only buffer=0 halos (from [-1,0,1] available in the nersc format)
-                mask_buffer0 = (halos['halo_buffer'] == 0)
-                mask_Host = (halos['IDhost'] <= 0) # only select host halos, not subhalos
-                mask_buffer0 = mask_buffer0 & mask_Host
-                
-                # filter halos
-                masses = halos['Mvir']
-                radii = halos['rvir']
-                concentrations = halos['cvir']
-                IDs = halos['ID']
-                select_masses = masses[mask_buffer0]
-                select_radii = radii[mask_buffer0]
-                select_concentrations = concentrations[mask_buffer0]
-                select_IDs = IDs[mask_buffer0] 
-                select_halo = halos[mask_buffer0]
-                
-                h = np.zeros(len(select_halo['x']),dtype=h_dt)
-                h['ID'] = select_IDs
-                
-                if scale_factor:
-                    r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
-                    a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
-                    h = append_fields(h, 'scale_factor', a)
+            #for i in shell_id:
+            #self.param.cosmo.z = redshift[i]
+            halos = lchalo_file["halos"]
+            #is buffer region included
+            # select only buffer=0 halos (from [-1,0,1] available in the nersc format)
+            mask_buffer0 = (halos['halo_buffer'] == 0)
+            mask_Host = (halos['IDhost'] <= 0) # only select host halos, not subhalos
+            mask_buffer0 = mask_buffer0 & mask_Host
+            
+            # filter halos
+            masses = halos['Mvir']
+            radii = halos['rvir']
+            concentrations = halos['cvir']
+            IDs = halos['ID']
+            r_com = np.sqrt(halos['x'] ** 2 + halos['y'] ** 2 + halos['z'] ** 2) / 1000 # in Mpc/h
+            select_masses = masses[mask_buffer0]
+            select_radii = radii[mask_buffer0]
+            select_concentrations = concentrations[mask_buffer0]
+            selected_rcom = r_com[mask_buffer0]
+            select_IDs = IDs[mask_buffer0] 
+            select_halo = halos[mask_buffer0]
+            
+            h = np.zeros(len(select_halo['x']),dtype=h_dt)
+            h['ID'] = select_IDs
+            
+            if scale_factor:
+                a = ccl.background.scale_factor_of_chi(cosmo_ccl, selected_rcom / cosmo_ccl['h'])  # Ensure r_com is in Mpc
+                h = append_fields(h, 'scale_factor', a)
 
-                # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
-                h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
-                # print('IDhosts:', h['IDhost'])
-                # we project the halo coordinates
-                norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
-                # print('norm:', norm)
-                h['cov'] = norm / 1000
-                shell_cov = shell_comoving_dis[i]
-                h['x'] = select_halo['x'] * shell_cov / norm
-                h['y'] = select_halo['y'] * shell_cov / norm
-                h['z'] = select_halo['z'] * shell_cov / norm
-                #read Mvir, cvir, rvir
-                h['Mvir'] =  select_masses
-                h['rvir'] = select_radii
-                h['cvir'] = select_concentrations
-                h = h[h['Mvir'] > self.param.code.Mhalo_min]
-                halo_shell[i] = h
+            # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
+            h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
+            # print('IDhosts:', h['IDhost'])
+            # we project the halo coordinates
+            norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
+            # print('norm:', norm)
+            shell_cov = shell_comoving_dis[i]
+            h['x'] = select_halo['x'] * shell_cov / norm
+            h['y'] = select_halo['y'] * shell_cov / norm
+            h['z'] = select_halo['z'] * shell_cov / norm
+            #read Mvir, cvir, rvir
+            h['Mvir'] =  select_masses
+            h['rvir'] = select_radii
+            h['cvir'] = select_concentrations
+            h = h[h['Mvir'] > self.param.code.Mhalo_min]
+            h['shell_id'] = select_halo['shell_id']
+            
+            for i in shell_id:
+                halo_shell[i] = h[h['shell_id'] == i]
             lchalo_file.close()
             del h#, halos_cosmogrid_old
                 
