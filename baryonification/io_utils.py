@@ -473,7 +473,7 @@ class IO_shell:
         LOGGER.info(f"Reading healpix shells done ✅\n")
         return shell_id, map_list
 
-    def read_halo_lc_file(self,output_shell_info = False, scale_facotr=False):
+    def read_halo_lc_file(self,output_shell_info = False, scale_factor=False):
         """
         Read in halo lightcone
         """
@@ -495,7 +495,7 @@ class IO_shell:
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
 
-            if scale_facotr:
+            if scale_factor:
                 import pyccl as ccl
                 cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
                                       h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
@@ -508,7 +508,7 @@ class IO_shell:
                 h['ID'] = select_halo['ID']
                 h['IDhost'] = select_halo['IDhost']
 
-                if scale_facotr:
+                if scale_factor:
                     r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
                     a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
                     h = append_fields(h, 'scale_factor', a)
@@ -542,7 +542,7 @@ class IO_shell:
             h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
             halo_shell = {}
             # halos_cosmogrid_old = np.load("/cluster/work/refregier/jbucko/shell_baryonification/data/cosmogrid/grid_cosmo_111246_run0/Halofile_MinParts=100.npz")
-            if scale_facotr:
+            if scale_factor:
                 import pyccl as ccl
                 cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
                                       h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
@@ -572,7 +572,7 @@ class IO_shell:
                 # host halo status needs to be obtained from the old cosmogrid file
                 # select_halos_old = halos_cosmogrid_old['halos'][halos_cosmogrid_old['halos']['shell_id'] == i]
 
-                if scale_facotr:
+                if scale_factor:
                     r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
                     a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
                     h = append_fields(h, 'scale_factor', a)
@@ -596,6 +596,81 @@ class IO_shell:
                 halo_shell[i] = h
             lchalo_file.close()
             del h#, halos_cosmogrid_old
+            
+        elif (halo_lc_file_format == 'AHF-lightcone'):
+            lchalo_file = h5py.File(halo_lc_file,'r')
+            shell_info = lchalo_file["/shells"][:]
+        
+            shell_comoving_dis = shell_info['shell_com']
+            thickness = shell_info['upper_com'] - shell_info['lower_com']
+            redshift = (shell_info['lower_z'] + shell_info['upper_z'])/2
+            shell_id_full = shell_info['shell_id']
+            shell_id = shell_id_full[min_shell:max_shell]
+            
+            #halo data
+            h_dt = np.dtype([('ID', '<i8'), ('IDhost', '<i8'), ('Mvir', '<f8'), ('Nvir', '<i8'), 
+                             ('x', '<f8'), ('y', '<f8'), ('z', '<f8'), 
+                             ('vx', '<f8'), ('vy', '<f8'), ('vz', '<f8'), 
+                             ('rvir', '<f8'), ('b_ov_a', '<f8'), ('c_ov_a', '<f8'), 
+                             ('Eax', '<f8'), ('Eay', '<f8'), ('Eaz', '<f8'), 
+                             ('Ebx', '<f8'), ('Eby', '<f8'), ('Ebz', '<f8'), 
+                             ('Ecx', '<f8'), ('Ecy', '<f8'), ('Ecz', '<f8'), 
+                             ('cvir', '<f8'), ('shell_id', '<i4'), ('halo_buffer', 'i1')])
+            halo_shell = {}
+            
+            if scale_factor:
+                import pyccl as ccl
+                cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
+                                      h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
+                
+            for i in shell_id:
+                self.param.cosmo.z = redshift[i]
+                halos = lchalo_file["halos"]
+                #is buffer region included
+                # select only buffer=0 halos (from [-1,0,1] available in the nersc format)
+                mask_buffer0 = (halos['halo_buffer'] == 0)
+                mask_Host = (halos['IDhost'] <= 0) # only select host halos, not subhalos
+                mask_buffer0 = mask_buffer0 & mask_Host
+                
+                # filter halos
+                masses = halos['Mvir']
+                radii = halos['rvir']
+                concentrations = halos['cvir']
+                IDs = halos['ID']
+                select_masses = masses[mask_buffer0]
+                select_radii = radii[mask_buffer0]
+                select_concentrations = concentrations[mask_buffer0]
+                select_IDs = IDs[mask_buffer0] 
+                select_halo = halos[mask_buffer0]
+                
+                h = np.zeros(len(select_halo['x']),dtype=h_dt)
+                h['ID'] = select_IDs
+                
+                if scale_factor:
+                    r_com = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2) / 1000 # in Mpc/h
+                    a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / cosmo_ccl['h'])  # Ensure r_com is in Mpc
+                    h = append_fields(h, 'scale_factor', a)
+
+                # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
+                h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
+                # print('IDhosts:', h['IDhost'])
+                # we project the halo coordinates
+                norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
+                # print('norm:', norm)
+                h['cov'] = norm / 1000
+                shell_cov = shell_comoving_dis[i]
+                h['x'] = select_halo['x'] * shell_cov / norm
+                h['y'] = select_halo['y'] * shell_cov / norm
+                h['z'] = select_halo['z'] * shell_cov / norm
+                #read Mvir, cvir, rvir
+                h['Mvir'] =  select_masses
+                h['rvir'] = select_radii
+                h['cvir'] = select_concentrations
+                h = h[h['Mvir'] > self.param.code.Mhalo_min]
+                halo_shell[i] = h
+            lchalo_file.close()
+            del h#, halos_cosmogrid_old
+                
         else:
             print("Other halo file formats not supported")
         
