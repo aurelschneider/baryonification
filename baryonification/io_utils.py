@@ -628,13 +628,11 @@ class IO_shell:
 
             shell_id_all = shell_info["shell_id"]
             shell_comoving_dis_all = shell_info["shell_com"]
-            thickness_all = shell_info["upper_com"] - shell_info["lower_com"]
-            redshift_all = (shell_info["lower_z"] + shell_info["upper_z"]) / 2
+            thickness = shell_info["upper_com"] - shell_info["lower_com"]
+            redshift = (shell_info["lower_z"] + shell_info["upper_z"]) / 2
 
             shell_id = shell_id_all[min_shell:max_shell]
             shell_comoving_dis = shell_comoving_dis_all[min_shell:max_shell]
-            thickness = thickness_all[min_shell:max_shell]
-            redshift = redshift_all[min_shell:max_shell]
 
             # parallel full read, ~n_workers x faster if CPU-bound on decompression
             halos_arr = parallel_read_dataset(halo_lc_file, "halos", n_workers=16)
@@ -665,7 +663,7 @@ class IO_shell:
             h['cov'] = r_com / 1000
             h['x'], h['y'], h['z'] = x_proj, y_proj, z_proj
             h['Mvir'] = halos_sel['Mvir']
-            h['rvir'] = halos_sel['rvir']
+            h['rvir'] = halos_sel['rvir'] / 1000 # convert to Mpc/h
             h['cvir'] = halos_sel['cvir']
 
             if scale_factor:
