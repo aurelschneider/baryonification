@@ -9,6 +9,7 @@ import h5py
 import healpy as hp
 from numpy.lib.recfunctions import append_fields
 from cosmic_toolbox import logger
+from multiprocessing import Pool, cpu_count
 
 from .constants import *
 from .profiles import *
@@ -598,81 +599,99 @@ class IO_shell:
             del h#, halos_cosmogrid_old
             
         elif (halo_lc_file_format == 'AHF-lightcone'):
-            lchalo_file = h5py.File(halo_lc_file,'r')
-            shell_info = lchalo_file["/shells"][:]
-        
-            shell_comoving_dis = shell_info['shell_com']
-            thickness = shell_info['upper_com'] - shell_info['lower_com']
-            redshift = (shell_info['lower_z'] + shell_info['upper_z'])/2
-            shell_id_full = shell_info['shell_id']
-            shell_id = shell_id_full[min_shell:max_shell]
             
-            #halo data
-            h_dt = np.dtype([('ID', '<i8'), ('IDhost', '<i8'), ('Mvir', '<f8'), ('Nvir', '<i8'), 
-                             ('x', '<f8'), ('y', '<f8'), ('z', '<f8'), 
-                             ('vx', '<f8'), ('vy', '<f8'), ('vz', '<f8'), 
-                             ('rvir', '<f8'), ('b_ov_a', '<f8'), ('c_ov_a', '<f8'), 
-                             ('Eax', '<f8'), ('Eay', '<f8'), ('Eaz', '<f8'), 
-                             ('Ebx', '<f8'), ('Eby', '<f8'), ('Ebz', '<f8'), 
-                             ('Ecx', '<f8'), ('Ecy', '<f8'), ('Ecz', '<f8'), 
-                             ('cvir', '<f8'), ('shell_id', '<i4'), ('halo_buffer', 'i1')])
-            halo_shell = {}
+            def _read_row_block(args):
+                path, dataset_name, start, end = args
+                with h5py.File(path, "r") as f:
+                    return f[dataset_name][start:end]
+
+            def parallel_read_dataset(path, dataset_name, n_workers, chunk_align=True):
+                with h5py.File(path, "r") as f:
+                    dset = f[dataset_name]
+                    n_rows = dset.shape[0]
+                    row_chunk = dset.chunks[0] if dset.chunks is not None else None
+
+                boundaries = np.linspace(0, n_rows, n_workers + 1, dtype=np.int64)
+                if chunk_align and row_chunk:
+                    boundaries = np.round(boundaries / row_chunk).astype(np.int64) * row_chunk
+                    boundaries[0], boundaries[-1] = 0, n_rows
+                    boundaries = np.unique(boundaries)
+
+                tasks = [(path, dataset_name, int(boundaries[i]), int(boundaries[i + 1]))
+                        for i in range(len(boundaries) - 1)]
+
+                with Pool(processes=n_workers) as pool:
+                    results = pool.map(_read_row_block, tasks)
+                return np.concatenate(results)
             
+            with h5py.File(halo_lc_file, "r") as f:
+                shell_info = f["/shells"][:]
+
+            shell_id_all = shell_info["shell_id"]
+            shell_comoving_dis_all = shell_info["shell_com"]
+            thickness_all = shell_info["upper_com"] - shell_info["lower_com"]
+            redshift_all = (shell_info["lower_z"] + shell_info["upper_z"]) / 2
+
+            shell_id = shell_id_all[min_shell:max_shell]
+            shell_comoving_dis = shell_comoving_dis_all[min_shell:max_shell]
+            thickness = thickness_all[min_shell:max_shell]
+            redshift = redshift_all[min_shell:max_shell]
+            t1 = time.time()
+            print(f"Read shell info: {t1 - t0:.1f} s")
+
+            # parallel full read, ~n_workers x faster if CPU-bound on decompression
+            halos_arr = parallel_read_dataset(halo_lc_file, "halos", n_workers=16)
+
+            mask = (
+                (halos_arr["halo_buffer"] == 0)
+                & (halos_arr["IDhost"] <= 0)
+                & (halos_arr["Mvir"] > self.param.code.Mhalo_min)
+                & np.isin(halos_arr["shell_id"], shell_id)
+            )
+            halos_sel = halos_arr[mask]
+            del halos_arr
+            t2 = time.time()
+            print(f"Read and filter halos: {t2 - t1:.1f} s")
+            x, y, z = halos_sel["x"], halos_sel["y"], halos_sel["z"]
+            r_com = np.sqrt(x**2 + y**2 + z**2)
+            shell_com_dict = dict(zip(shell_id_all, shell_comoving_dis_all))
+            shell_cov = np.array([shell_com_dict[i] for i in halos_sel["shell_id"]])
+
+            x_proj = x * shell_cov / r_com
+            y_proj = y * shell_cov / r_com
+            z_proj = z * shell_cov / r_com
+
+            h_dt = np.dtype([('ID', '<i4'), ('IDhost', '<i4'), ('cov', '<f8'), ('x', '<f8'),
+                                ('y', '<f8'), ('z', '<f8'), ('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
+            h = np.zeros(len(x), dtype=h_dt)
+            h['ID'] = halos_sel['ID']
+            h['IDhost'] = -1
+            h['cov'] = r_com / 1000
+            h['x'], h['y'], h['z'] = x_proj, y_proj, z_proj
+            h['Mvir'] = halos_sel['Mvir']
+            h['rvir'] = halos_sel['rvir']
+            h['cvir'] = halos_sel['cvir']
+
             if scale_factor:
                 import pyccl as ccl
-                cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, Omega_b=self.param.cosmo.Ob,
-                                      h=self.param.cosmo.h0, sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
-                
-            #for i in shell_id:
-            #self.param.cosmo.z = redshift[i]
-            halos = lchalo_file["halos"]
-            #is buffer region included
-            # select only buffer=0 halos (from [-1,0,1] available in the nersc format)
-            mask_buffer0 = (halos['halo_buffer'] == 0)
-            mask_Host = (halos['IDhost'] <= 0) # only select host halos, not subhalos
-            mask_buffer0 = mask_buffer0 & mask_Host
-            
-            # filter halos
-            masses = halos['Mvir']
-            radii = halos['rvir']
-            concentrations = halos['cvir']
-            IDs = halos['ID']
-            r_com = np.sqrt(halos['x'] ** 2 + halos['y'] ** 2 + halos['z'] ** 2) / 1000 # in Mpc/h
-            select_masses = masses[mask_buffer0]
-            select_radii = radii[mask_buffer0]
-            select_concentrations = concentrations[mask_buffer0]
-            selected_rcom = r_com[mask_buffer0]
-            select_IDs = IDs[mask_buffer0] 
-            select_halo = halos[mask_buffer0]
-            
-            h = np.zeros(len(select_halo['x']),dtype=h_dt)
-            h['ID'] = select_IDs
-            
-            if scale_factor:
-                a = ccl.background.scale_factor_of_chi(cosmo_ccl, selected_rcom / cosmo_ccl['h'])  # Ensure r_com is in Mpc
+                cosmo_ccl = ccl.Cosmology(Omega_c=Om - Ob, Omega_b=Ob,
+                                            h=h0, sigma8=s8, n_s=ns,
+                                            transfer_function='eisenstein_hu')
+                a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / 1000 / cosmo_ccl['h'])
                 h = append_fields(h, 'scale_factor', a)
 
-            # h['IDhost'] = select_halos_old['IDhost'][np.argsort(select_halos_old['ID'])[np.searchsorted(np.sort(select_halos_old['ID']), select_IDs)]]
-            h['IDhost'] = -1*np.ones(len(select_IDs)) # cosmogrid has FOF halos - no subhalos, so all are hosts
-            # print('IDhosts:', h['IDhost'])
-            # we project the halo coordinates
-            norm = np.sqrt(select_halo['x'] ** 2 + select_halo['y'] ** 2 + select_halo['z'] ** 2)
-            # print('norm:', norm)
-            shell_cov = shell_comoving_dis[i]
-            h['x'] = select_halo['x'] * shell_cov / norm
-            h['y'] = select_halo['y'] * shell_cov / norm
-            h['z'] = select_halo['z'] * shell_cov / norm
-            #read Mvir, cvir, rvir
-            h['Mvir'] =  select_masses
-            h['rvir'] = select_radii
-            h['cvir'] = select_concentrations
-            h = h[h['Mvir'] > self.param.code.Mhalo_min]
-            h['shell_id'] = select_halo['shell_id']
-            
+            halo_shell = {}
+            order = np.argsort(halos_sel['shell_id'], kind='stable')
+            h_sorted = h[order]
+            sorted_shell_ids = halos_sel['shell_id'][order]
+            unique_ids, start_idx = np.unique(sorted_shell_ids, return_index=True)
+            start_idx = np.append(start_idx, len(sorted_shell_ids))
+            id_to_range = {uid: (start_idx[i], start_idx[i + 1]) for i, uid in enumerate(unique_ids)}
+
             for i in shell_id:
-                halo_shell[i] = h[h['shell_id'] == i]
-            lchalo_file.close()
-            del h#, halos_cosmogrid_old
+                s, e = id_to_range.get(i, (0, 0))
+                halo_shell[i] = h_sorted[s:e] if i in id_to_range else h[:0]
+            del h, h_sorted, halos_sel
                 
         else:
             print("Other halo file formats not supported")
