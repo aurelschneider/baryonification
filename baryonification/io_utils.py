@@ -18,6 +18,30 @@ from .cosmo import *
 
 LOGGER = logger.get_logger(__name__)
 
+def _read_row_block(args):
+    path, dataset_name, start, end = args
+    with h5py.File(path, "r") as f:
+        return f[dataset_name][start:end]
+
+def parallel_read_dataset(path, dataset_name, n_workers, chunk_align=True):
+    with h5py.File(path, "r") as f:
+        dset = f[dataset_name]
+        n_rows = dset.shape[0]
+        row_chunk = dset.chunks[0] if dset.chunks is not None else None
+
+    boundaries = np.linspace(0, n_rows, n_workers + 1, dtype=np.int64)
+    if chunk_align and row_chunk:
+        boundaries = np.round(boundaries / row_chunk).astype(np.int64) * row_chunk
+        boundaries[0], boundaries[-1] = 0, n_rows
+        boundaries = np.unique(boundaries)
+
+    tasks = [(path, dataset_name, int(boundaries[i]), int(boundaries[i + 1]))
+            for i in range(len(boundaries) - 1)]
+
+    with Pool(processes=n_workers) as pool:
+        results = pool.map(_read_row_block, tasks)
+    return np.concatenate(results)
+
 class IO_nbody:
     """
     Class for N-body file I/O operations.
@@ -598,32 +622,7 @@ class IO_shell:
             lchalo_file.close()
             del h#, halos_cosmogrid_old
             
-        elif (halo_lc_file_format == 'AHF-lightcone'):
-            
-            def _read_row_block(args):
-                path, dataset_name, start, end = args
-                with h5py.File(path, "r") as f:
-                    return f[dataset_name][start:end]
-
-            def parallel_read_dataset(path, dataset_name, n_workers, chunk_align=True):
-                with h5py.File(path, "r") as f:
-                    dset = f[dataset_name]
-                    n_rows = dset.shape[0]
-                    row_chunk = dset.chunks[0] if dset.chunks is not None else None
-
-                boundaries = np.linspace(0, n_rows, n_workers + 1, dtype=np.int64)
-                if chunk_align and row_chunk:
-                    boundaries = np.round(boundaries / row_chunk).astype(np.int64) * row_chunk
-                    boundaries[0], boundaries[-1] = 0, n_rows
-                    boundaries = np.unique(boundaries)
-
-                tasks = [(path, dataset_name, int(boundaries[i]), int(boundaries[i + 1]))
-                        for i in range(len(boundaries) - 1)]
-
-                with Pool(processes=n_workers) as pool:
-                    results = pool.map(_read_row_block, tasks)
-                return np.concatenate(results)
-            
+        elif (halo_lc_file_format == 'AHF-lightcone'):            
             with h5py.File(halo_lc_file, "r") as f:
                 shell_info = f["/shells"][:]
 
@@ -636,8 +635,6 @@ class IO_shell:
             shell_comoving_dis = shell_comoving_dis_all[min_shell:max_shell]
             thickness = thickness_all[min_shell:max_shell]
             redshift = redshift_all[min_shell:max_shell]
-            t1 = time.time()
-            print(f"Read shell info: {t1 - t0:.1f} s")
 
             # parallel full read, ~n_workers x faster if CPU-bound on decompression
             halos_arr = parallel_read_dataset(halo_lc_file, "halos", n_workers=16)
@@ -650,8 +647,7 @@ class IO_shell:
             )
             halos_sel = halos_arr[mask]
             del halos_arr
-            t2 = time.time()
-            print(f"Read and filter halos: {t2 - t1:.1f} s")
+
             x, y, z = halos_sel["x"], halos_sel["y"], halos_sel["z"]
             r_com = np.sqrt(x**2 + y**2 + z**2)
             shell_com_dict = dict(zip(shell_id_all, shell_comoving_dis_all))
@@ -674,9 +670,10 @@ class IO_shell:
 
             if scale_factor:
                 import pyccl as ccl
-                cosmo_ccl = ccl.Cosmology(Omega_c=Om - Ob, Omega_b=Ob,
-                                            h=h0, sigma8=s8, n_s=ns,
-                                            transfer_function='eisenstein_hu')
+                cosmo_ccl = ccl.Cosmology(Omega_c=self.param.cosmo.Om-self.param.cosmo.Ob, 
+                                          Omega_b=self.param.cosmo.Ob, h=self.param.cosmo.h0, 
+                                          sigma8=self.param.cosmo.s8, n_s=self.param.cosmo.ns, transfer_function='eisenstein_hu')
+                
                 a = ccl.background.scale_factor_of_chi(cosmo_ccl, r_com / 1000 / cosmo_ccl['h'])
                 h = append_fields(h, 'scale_factor', a)
 
