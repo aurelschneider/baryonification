@@ -189,7 +189,7 @@ class ParticleDisplacer:
             for i in range(len(h_chunk['Mvir'])):
             # for i in tqdm(idx_local):
                 #select host haloes (subhaloes >= 1)
-                if (h_chunk['IDhost'][i] < 0):
+                if (h_chunk['IDhost'][i] <= 0):
                     
                     print('start: ', i)
 
@@ -478,6 +478,7 @@ class ParticleDisplacer:
                                         print("Npart_per_sat = ", Npart)
                                     
                                         dist_, ip_sh_stars = p_tree.query((shi['x'][j],shi['y'][j],shi['z'][j]), Npart, distance_upper_bound=shi['rvir'][j])
+                                        ip_sh_stars = np.atleast_1d(ip_sh_stars)
 
                                         #Remove subhaloes that are outside of boundary region (no particles witin rvir)
                                         ip_sh_stars_clean = np.delete(ip_sh_stars, np.where(ip_sh_stars == len(DpBAR['id'])))
