@@ -676,121 +676,105 @@ class ShellDisplacer:
         # create MPI pool
         with schwimmbad.MPIPool() as pool:
         # with schwimmbad.SerialPool() as pool:
-            
+
+            # diagnostic: when does each rank actually become ready to receive
+            # work (i.e. finished its own MPI/Python/import startup)? If ranks
+            # become ready at staggered times (spread over minutes rather than
+            # clustered near launch), that points to a startup/import-storm
+            # bottleneck rather than a slow per-task dispatch (comm.send).
+            LOGGER.info(f"......[startup] rank {MPI.COMM_WORLD.Get_rank()} ready (master={pool.is_master()})")
+
             if not pool.is_master():
                 pool.wait()
                 sys.exit(0)
 
+            io_shell = None
             try:
                 LOGGER.info(f"Performing shell baryonification for {self.param.shell.max_shell - self.param.shell.min_shell} shells ({self.param.shell.min_shell}-{self.param.shell.max_shell}).\n")
 
                 io_shell = IO_shell(self.param)
                 h_list, thickness_list, redshift_list, shell_cov_list = io_shell.read_halo_lc_file()
-                shell_id, map_list = io_shell.read_healpix_file()
+                shell_id = io_shell.get_shell_ids()
+                num_shells = len(shell_id)
 
-                p_list = self.perform_get_particle(map_list, h_list, shell_cov_list, pool)
-                del map_list
+                # stream one shell at a time (read pixel map -> particles ->
+                # displace -> write -> free) instead of materializing every
+                # shell's input pixel map and particle mesh (a few GB each) in
+                # memory before writing anything to disk - this also gives a
+                # restartable output file: shells already present get skipped
+                # (and never even read) instead of redone. The output file
+                # itself is only opened for the brief duration of each write
+                # (write_one_shell), not held open for the whole job - if a
+                # crash (OOM, time limit) happens between writes, the file is
+                # already safely closed and cannot be left in a
+                # truncated/corrupt state.
+                for i_proc, shell_id_i in enumerate(shell_id):
+                    if io_shell.shell_already_written(shell_id_i):
+                        LOGGER.info(f"......Shell {shell_id_i} already present in output file, skipping.")
+                        continue
 
-                if (self.param.code.multicomp == True):
-                    gas_shell, dm_shell, star_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool)
-                    io_shell.write_shell_file_multicomp(gas_shell,dm_shell,star_shell)
-                elif (self.param.code.multicomp == False):
-                    dmb_shell = self.displace_shell(shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool)
-                    io_shell.write_shell_file_singlecomp(dmb_shell)
-                else:
-                    LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
-                    exit()
+                    LOGGER.info(f"......Shell {i_proc+1}/{num_shells} (shell_id={shell_id_i})")
+                    t1 = time()
+
+                    pixels = io_shell.read_healpix_shell(shell_id_i)
+                    p = self.get_particle_for_shell(i_proc, shell_id_i, pixels, h_list[i_proc], shell_cov_list[i_proc], pool)
+                    del pixels
+                    task = (shell_id_i, h_list[i_proc], thickness_list[i_proc], p, redshift_list[i_proc], shell_cov_list[i_proc], self.param)
+                    result = self.loop_halos(task, pool)
+
+                    if self.param.code.multicomp:
+                        _, gas_map, dm_map, star_map = result
+                        io_shell.write_one_shell(shell_id_i, {'dm': dm_map, 'gas': gas_map, 'star': star_map})
+                        del gas_map, dm_map, star_map
+                    else:
+                        _, dmb_map = result
+                        io_shell.write_one_shell(shell_id_i, {'dmb': dmb_map})
+                        del dmb_map
+
+                    del p, result
+                    gc.collect()
+
+                    t2 = time()
+                    LOGGER.info(f"......Shell {i_proc+1}/{num_shells} written to output file. Ellapsed time: {t2 - t1:.3f} seconds")
+                LOGGER.info(f"Displacing shells done ✅\n")
             finally:
                 # safety net: removes every temp file tagged with this job's SLURM_JOB_ID,
                 # even if an exception above skipped the normal per-phase cleanup
                 LOGGER.info(f"Cleaning up any remaining temporary files for this job...")
                 cleanup_job_tmp_files(self.param)
+                if io_shell is not None:
+                    io_shell.close_healpix_file()
 
         return 0
 
-    def perform_get_particle(self, map_list, h_list, shell_cov_list, pool):
+    def get_particle_for_shell(self, i_proc, shell_id_i, pixels, h, shell_cov, pool):
         """
-        Convert map to particles, parallelized.
+        Convert one shell's map to particles, using/populating the on-disk cache
+        so a rerun (e.g. after a restart) doesn't resample particles for shells
+        whose mesh was already built.
         """
-        num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
-        if num_shells != len(map_list):
-            raise ValueError(f"Mismatch: {len(map_list)} shells but num_shells={num_shells}")
-
-        tasks = [(i, map_list[i], h_list[i], self.param, shell_cov_list[i]) for i in range(num_shells)]
-        
         output_dir = self.param.files.tmp_files
-        results = []
-        for i_proc in range(num_shells):
-            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_shells}")
-            t1 = time()
-            # if subsampled particles for a given DM shell are stored, read the file instead of rerunning
-            filename_pixleparticle = f"{output_dir}/pixel_particles__{self.param.files.shellfile_in.replace('/','_').replace('.','_')}___shell_{self.param.shell.min_shell+i_proc}.pkl"
-            if os.path.exists(filename_pixleparticle):
-                LOGGER.info(f"......Found existing pixel particles file for shell {self.param.shell.min_shell+i_proc}, loading file {filename_pixleparticle}")
-                with open(filename_pixleparticle, "rb") as pkl_file:
-                    result = pkl.load(pkl_file)
-            else:
-                LOGGER.info(f"......No existing pixel particles file found for shell {self.param.shell.min_shell+i_proc}, entering particle subsampling")
-                result = particle_worker(tasks[i_proc],pool)
-            
-                # store subsampled particles to disk (if output_pixelparticle_file=TRUE) 
-                if self.param.files.output_pixelparticle_file:
-                    with open(filename_pixleparticle, "wb") as pkl_file:
-                        pkl.dump(result, pkl_file)
-            
-            results.append(result)
-            t2 = time()
-            LOGGER.info(f"Sampling particles for shell {i_proc+1}/{num_shells} done ✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
-
-        particle_shell = {i: p for i, p in results}
-        return [particle_shell[i] for i in sorted(particle_shell.keys())]
-
-    def displace_shell(self, shell_id, p_list, redshift_list, h_list, thickness_list, shell_cov_list, pool, test=False):
-        '''
-        displace particles on the shell with the halo file
-        '''
-        LOGGER.info(f"Displacing shells...")
-        num_shells = int(self.param.shell.max_shell - self.param.shell.min_shell)
-
-        tasks = list(zip(shell_id, h_list, thickness_list, p_list, redshift_list, shell_cov_list, np.repeat(self.param,num_shells)))
-
-        if (self.param.code.multicomp == True):
-            
-            gasdata = {}
-            dmdata = {}
-            stardata = {}
-
-            for i_proc in range(num_shells):
-                LOGGER.info(f"......Shell {i_proc+1}/{num_shells}")
-                t1 = time()
-                result = self.loop_halos(tasks[i_proc], pool)
-                i_shell = result[0]
-                gasdata[i_shell] = result[1]
-                dmdata[i_shell] = result[2]
-                stardata[i_shell] = result[3]
-                t2 = time()
-                LOGGER.info(f"......Shell {i_proc+1}/{num_shells} done. Ellapsed time: {t2 - t1:.3f} seconds")
-            LOGGER.info(f"Displacing shells done ✅\n")
-            return gasdata, dmdata, stardata
-        
-        elif (self.param.code.multicomp == False):
-
-            dmbdata = {}
-
-            for i_proc in range(num_shells):
-                LOGGER.info(f"......Shell {i_proc+1}/{num_shells}")
-                t1 = time()
-                result = self.loop_halos(tasks[i_proc], pool)
-                i_shell = result[0]
-                dmbdata[i_shell] = result[1]
-                t2 = time()
-                LOGGER.info(f"......Shell {i_proc+1}/{num_shells} done. Ellapsed time: {t2 - t1:.3f} seconds")
-            LOGGER.info(f"Displacing shells done ✅\n")
-            return dmbdata
-        
+        LOGGER.info(f"Sampling particles for shell_id={shell_id_i}")
+        t1 = time()
+        # if subsampled particles for a given DM shell are stored, read the file instead of rerunning
+        filename_pixleparticle = f"{output_dir}/pixel_particles__{self.param.files.shellfile_in.replace('/','_').replace('.','_')}___shell_{shell_id_i}.pkl"
+        if os.path.exists(filename_pixleparticle):
+            LOGGER.info(f"......Found existing pixel particles file for shell {shell_id_i}, loading file {filename_pixleparticle}")
+            with open(filename_pixleparticle, "rb") as pkl_file:
+                _, p = pkl.load(pkl_file)
         else:
-            LOGGER.critical(f"param.code.multicomp must be either True or False. Abort")
-            exit()
+            LOGGER.info(f"......No existing pixel particles file found for shell {shell_id_i}, entering particle subsampling")
+            task = (i_proc, pixels, h, self.param, shell_cov)
+            _, p = particle_worker(task, pool)
+
+            # store subsampled particles to disk (if output_pixelparticle_file=TRUE)
+            if self.param.files.output_pixelparticle_file:
+                with open(filename_pixleparticle, "wb") as pkl_file:
+                    pkl.dump((i_proc, p), pkl_file)
+
+        t2 = time()
+        LOGGER.info(f"Sampling particles for shell_id={shell_id_i} done ✅. Ellapsed time: {t2 - t1:.3f} seconds\n")
+        return p
 
     def loop_halos(self, task, pool):
         '''
@@ -812,7 +796,20 @@ class ShellDisplacer:
         
         t1 = time()
         # p_tree = spatial.cKDTree(list(zip(p['x'],p['y'],p['z'])), leafsize=100)
-        pos = np.empty((len(p), 3), dtype=np.float32)
+        # cKDTree's C implementation requires contiguous float64 ("doubles")
+        # internally - per its docstring, the input "is not copied unless
+        # necessary to produce a contiguous array of doubles". Building from
+        # a float32 array (as this used to do) silently forces exactly that
+        # copy-to-float64 inside cKDTree, so the float32 array AND its float64
+        # conversion-copy are briefly both alive - i.e. building from float32
+        # is *more* memory, not less. Measured on 20M synthetic points:
+        # float32 input -> 876MB total (229MB array + 647MB internal copy);
+        # float64 input -> 646MB total (458MB array + 188MB node overhead
+        # only, no duplicate copy). Building from float64 directly avoids the
+        # redundant copy (~9-10GB saved on rank 0 for an 824M-particle shell)
+        # and also avoids truncating positions to float32 precision before
+        # the tree is even built.
+        pos = np.empty((len(p), 3), dtype=np.float64)
         pos[:, 0] = p['x']
         pos[:, 1] = p['y']
         pos[:, 2] = p['z']
@@ -839,6 +836,22 @@ class ShellDisplacer:
 
         output_dir = self.param.files.tmp_files
         run_tag = make_run_tag(shell_id)
+
+        # Stage the big blobs every worker mmaps (p, h, the particle KDTree)
+        # on node-local disk instead of the network-mounted tmp_files dir.
+        # These can be tens of GB, and with up to N_cpu workers concurrently
+        # doing random-access KDTree queries + fancy-indexing against them,
+        # network-filesystem latency (this cluster's tmp_files is on Lustre)
+        # dominates per-halo cost far more than the actual physics - measured
+        # at 300-1000ms/halo vs ~10-15ms of real compute. SLURM exports
+        # TMPDIR pointing at node-local scratch (request space for it via
+        # --tmp= in the job script). This only works because these jobs are
+        # single-node (--nodes=1): every worker rank then sees the same local
+        # directory. If a job ever spans multiple nodes, TMPDIR would be
+        # node-private and this needs to go back to a shared filesystem path
+        # (falls back to tmp_files automatically if TMPDIR isn't set at all).
+        local_dir = os.environ.get("TMPDIR", output_dir)
+
         # store px,py,pz to be used by MPI tasks
         fields = ['x','y','z']
         new_dtype = np.dtype([(f, p[f].dtype) for f in fields])
@@ -847,19 +860,30 @@ class ShellDisplacer:
         # Copy the requested fields
         for f in fields:
             p_coords[f] = p[f]
-        p_fn = os.path.join(output_dir,f"p_{run_tag}.npy")
-        h_fn = os.path.join(output_dir,f"h_{run_tag}.npy")
+        p_fn = os.path.join(local_dir,f"p_{run_tag}.npy")
+        h_fn = os.path.join(local_dir,f"h_{run_tag}.npy")
         np.save(p_fn, p_coords)  # save p to a file to avoid pickling issues
         np.save(h_fn, h)  # save p to a file to avoid pickling issues
+        # p_coords (tens of GB for a dense shell) is only needed for the save
+        # above - on rank 0 it would otherwise stay alive, unused, for the
+        # rest of this function (the whole pool.map dispatch+wait plus the
+        # results-combination step below), needlessly competing with the
+        # KDTree's own data and the per-worker result maps for memory.
+        del p_coords
+        gc.collect()
         # save the tree's large internal arrays as separate mmap-able files so workers
         # share the same physical pages instead of each unpickling a private full copy
-        p_tree_files = save_cKDTree_shared(p_tree, output_dir, prefix=f"p_tree_{run_tag}")
+        p_tree_files = save_cKDTree_shared(p_tree, local_dir, prefix=f"p_tree_{run_tag}")
 
         # prepare argument list
+        # workers also write their (small, sparse) per-cpu result files under
+        # local_dir - harmless since this function (the caller) reads them
+        # back on the same node right after pool.map returns, and cleans them
+        # up via sum_structured_arrays_from_files_*.
         args_for_loop_halo_chunks = [shell_cov, var_tck, bias_tck, corr_tck]
         task_mpi = (shell_id, thickness, redshift, param)
         iterable_args = [
-            (i_cpu, idx[i_cpu::nproc], task_mpi, args_for_loop_halo_chunks, output_dir)
+            (i_cpu, idx[i_cpu::nproc], task_mpi, args_for_loop_halo_chunks, local_dir)
             for i_cpu in range(nproc)
         ]
 

@@ -408,85 +408,88 @@ class IO_shell:
         self.param = param
         self.CosmoCalculator = CosmoCalculator(param)
 
-    def read_healpix_file(self):
+    def get_shell_ids(self):
         """
-        Read in lightcone healpix, adopt units.
+        Just the list of shell indices for the requested min_shell:max_shell
+        range - cheap, reads only small metadata (or nothing), never the
+        per-shell pixel maps themselves. Use read_healpix_shell() to load one
+        shell's pixels on demand inside the main per-shell loop, instead of
+        loading every shell's map up front (a few GB each, times the number
+        of shells in the job).
         """
-        LOGGER.info(f"Reading healpix shells...")
-        shell_file_in = self.param.files.shellfile_in
-        halo_lc_file = self.param.files.halolc_in
         shell_file_format = self.param.files.shellfile_format
+        halo_lc_file = self.param.files.halolc_in
         halo_lc_file_format = self.param.files.halolc_format
-        nside = self.param.shell.nside
-        npix = hp.nside2npix(nside)
         max_shell = self.param.shell.max_shell
         min_shell = self.param.shell.min_shell
-        shells = {}
-        
+
         if shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid':
-            shell_file = np.load(shell_file_in)
-            shell_data = shell_file['shells']
             lchalo_file = np.load(halo_lc_file)
-            shell_info = lchalo_file['shell_info']
-            shell_id_full = shell_info['shell_id']
-            shell_id = shell_id_full[min_shell:max_shell]
-            for i in shell_id:
-                pixels = shell_data[i, :]
-                shells[i] = pixels
-        elif shell_file_format == 'CosmoGrid_nersc' and halo_lc_file_format == 'CosmoGrid_nersc':
-            shell_file = h5py.File(shell_file_in,'r')
-            with h5py.File(halo_lc_file,'r') as lchalo_file:
-                shell_info = lchalo_file["/shell_data"][:]
-                shell_id_full = shell_info['shell_id']
-            shell_id = shell_id_full[min_shell:max_shell]
-            for i in shell_id:
-                pixels = shell_file["/nobaryon_shells/shell{:03d}".format(i)][:]
-                shells[i] = pixels
-            shell_file.close()
-        elif shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid_nersc':
-            # with better halos, but higher-res z-shells
-            shell_file = np.load(shell_file_in)
-            shell_data = shell_file['shells']
-            with h5py.File(halo_lc_file,'r') as lchalo_file:
-                shell_info = lchalo_file["/shell_data"][:]
-                shell_id_full = shell_info['shell_id']
-            shell_id = shell_id_full[min_shell:max_shell]
-            for i in shell_id:
-                pixels = shell_data[i, :]
-                shells[i] = pixels
-        elif shell_file_format == 'box_replication':
-            shell_data   = np.load(shell_file_in)  ["shells"]
-            shell_id = range(min_shell,max_shell)
-            for i in shell_id:
-                dmo_pixels   = shell_data[i]
-                shells[i] = dmo_pixels
-        elif shell_file_format == 'euclid_fs2':
-            try:
-                steps_filename = '/cluster/work/refregier/jbucko/shell_baryonification/eulid_fs2/data/steps.fs2.ssv'
-                shell_info = np.genfromtxt(steps_filename,skip_header=1)
-            except IOError:
-                LOGGER.critical(f'IOERROR: {steps_filename} file does not exist!')
-                exit()
-            shell_id = range(min_shell,max_shell)
-            for i in shell_id:
-                step = shell_info[i]
-                step_id = int(step[0])
-                LOGGER.debug(f"Reading shell file: {shell_file_in+f'.{step_id:05d}.fits'}")
-                hdul = fits.open(shell_file_in+f".{step_id:05d}.fits")
-                pixels = np.array(hdul[1].data, dtype=float)
-                shells[i] = pixels
+            shell_id_full = lchalo_file['shell_info']['shell_id']
+            return shell_id_full[min_shell:max_shell]
+        elif (shell_file_format == 'CosmoGrid_nersc' and halo_lc_file_format == 'CosmoGrid_nersc') or \
+             (shell_file_format == 'CosmoGrid' and halo_lc_file_format == 'CosmoGrid_nersc'):
+            with h5py.File(halo_lc_file, 'r') as lchalo_file:
+                shell_id_full = lchalo_file["/shell_data"]["shell_id"][:]
+            return shell_id_full[min_shell:max_shell]
+        elif shell_file_format in ('box_replication', 'euclid_fs2'):
+            return range(min_shell, max_shell)
         else:
             LOGGER.critical(f"Other shell file formats not supported. Requested format not recognized: {shell_file_format}")
             exit()
-        map_list = [shells[i] for i in shell_id]
-        # check tthe consistency of the shell length with nside
-        for key, val in shells.items():
-            n_pix = len(val)
-            break
-        n_side = hp.npix2nside(n_pix)
+
+    def read_healpix_shell(self, shell_id_i):
+        """
+        Read a single shell's healpix pixel map on demand. For formats that
+        store every shell pre-packed into one compressed .npz array
+        (CosmoGrid, box_replication), np.load() decompresses the whole array
+        on first access regardless - that array is cached on this IO_shell
+        instance (self._shell_data) so it's only decompressed once, not once
+        per shell. For formats where shells are genuinely independent on disk
+        (euclid_fs2's per-shell FITS files, CosmoGrid_nersc's per-shell HDF5
+        datasets) this is a real per-shell read, with the open file handle
+        cached and reused across calls - call close_healpix_file() once after
+        the shell loop to release it.
+        """
+        shell_file_in = self.param.files.shellfile_in
+        shell_file_format = self.param.files.shellfile_format
+
+        if shell_file_format in ('CosmoGrid', 'box_replication'):
+            if not hasattr(self, '_shell_data'):
+                self._shell_data = np.load(shell_file_in)['shells']
+            pixels = self._shell_data[shell_id_i, :] if shell_file_format == 'CosmoGrid' else self._shell_data[shell_id_i]
+        elif shell_file_format == 'CosmoGrid_nersc':
+            if not hasattr(self, '_shell_file_handle'):
+                self._shell_file_handle = h5py.File(shell_file_in, 'r')
+            pixels = self._shell_file_handle["/nobaryon_shells/shell{:03d}".format(shell_id_i)][:]
+        elif shell_file_format == 'euclid_fs2':
+            if not hasattr(self, '_euclid_shell_info'):
+                try:
+                    steps_filename = '/cluster/work/refregier/jbucko/shell_baryonification/eulid_fs2/data/steps.fs2.ssv'
+                    self._euclid_shell_info = np.genfromtxt(steps_filename, skip_header=1)
+                except IOError:
+                    LOGGER.critical(f'IOERROR: {steps_filename} file does not exist!')
+                    exit()
+            step_id = int(self._euclid_shell_info[shell_id_i][0])
+            fname = shell_file_in + f".{step_id:05d}.fits"
+            LOGGER.debug(f"Reading shell file: {fname}")
+            with fits.open(fname) as hdul:
+                pixels = np.array(hdul[1].data, dtype=float)
+        else:
+            LOGGER.critical(f"Other shell file formats not supported. Requested format not recognized: {shell_file_format}")
+            exit()
+
+        n_side = hp.npix2nside(len(pixels))
         assert n_side == self.param.shell.nside, f"n_side of the lightcone shell does not match the input nside: {n_side} != {self.param.shell.nside}"
-        LOGGER.info(f"Reading healpix shells done ✅\n")
-        return shell_id, map_list
+        return pixels
+
+    def close_healpix_file(self):
+        """Release the cached file handle/array from read_healpix_shell(), if any."""
+        if hasattr(self, '_shell_file_handle'):
+            self._shell_file_handle.close()
+            del self._shell_file_handle
+        if hasattr(self, '_shell_data'):
+            del self._shell_data
 
     def read_halo_lc_file(self,output_shell_info = False,read_velocities = False):
         """
@@ -688,6 +691,37 @@ class IO_shell:
         LOGGER.info(f"Reading lightcone halo done ✅\n")
         return h_list, thickness_list, redshift_list, shell_cov_list
 
+    def shell_already_written(self, shell_id_i):
+        '''
+        Whether shell_id_i's output is already fully present in the output file
+        (all channel groups, for multicomp) - used to skip already-completed
+        shells on resume. Opens the file only for the duration of this check
+        (closed again immediately) - a missing file just means "not written".
+        '''
+        shell_file_out = self.param.files.shellfile_out
+        if not os.path.exists(shell_file_out):
+            return False
+        dataset_name = f'shell_{shell_id_i}'
+        channel_groups = ['dm', 'gas', 'star'] if self.param.code.multicomp else ['dmb']
+        with h5py.File(shell_file_out, 'r') as f:
+            return all(group_name in f and dataset_name in f[group_name] for group_name in channel_groups)
+
+    def write_one_shell(self, shell_id_i, channel_maps):
+        '''
+        Write one shell's output map(s) - channel_maps is e.g.
+        {'dm': arr, 'gas': arr, 'star': arr} or {'dmb': arr}. Opens the output
+        file only for the duration of this single write, then flushes and
+        closes immediately, instead of holding it open for the whole
+        (potentially hours-long) multi-shell job - keeps the window during
+        which a crash (OOM, time limit) could leave the file truncated/corrupt
+        as small as possible.
+        '''
+        shell_file_out = self.param.files.shellfile_out
+        with h5py.File(shell_file_out, 'a') as f:
+            for group_name, healpix_map in channel_maps.items():
+                save_dict_to_hdf5(f, group_name, {shell_id_i: healpix_map})
+            f.flush()
+
     def write_shell_file_multicomp(self,gas_shell,dm_shell,star_shell):
         '''
         write output healpix file.
@@ -699,7 +733,7 @@ class IO_shell:
             save_dict_to_hdf5(f, 'star', star_shell)
         LOGGER.info(f"Multi-component baryonified shells saved to {shell_file_out}")
         return
-    
+
     def write_shell_file_singlecomp(self,dmb_shell):
         '''
         write output healpix file.
