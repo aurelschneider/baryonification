@@ -1,0 +1,25 @@
+#!/bin/bash -l
+#SBATCH --job-name=cosmogrid_shbfc
+#SBATCH --nodes=1
+#SBATCH --ntasks=128
+#SBATCH --cpus-per-task=1
+#SBATCH --time=20:00:00
+#SBATCH --mem-per-cpu=8G
+#SBATCH --tmp=150G
+#SBATCH --output=slurm/%x_%j.out
+#SBATCH --error=slurm/%x_%j.err
+#SBATCH --partition=bigmem.24h
+
+export HDF5_USE_FILE_LOCKING=FALSE
+export PYTHON_LOGGER_LEVEL=debug # or info
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+module load stack
+module load hdf5
+
+source /cluster/home/jbucko/python_venv_shell_bfc/bin/activate
+# SHELL_MIN/SHELL_MAX are set via `sbatch --export=ALL,SHELL_MIN=...,SHELL_MAX=...`
+# at submission time; defaults here only matter if submitted without --export.
+srun python /cluster/home/jbucko/work/shell_baryonification/scripts/run_shell_bfc_cosmogrid_euclidFS2_branch.py
