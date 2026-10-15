@@ -86,6 +86,7 @@ def io_files():
         "shellfile_out": 'shell_out.h5',         # output lightcone shell file
         "output_pixelparticle_file": False,      # output file for pixel particles
         "tmp_files": './tmp',                    # directory to store temporary files (they can be large!)
+        "flamingo_map_field": 'DarkMatterMass',  # FLAMINGO HEALPix map to read (shellfile_format = 'FLAMINGO')
     }
     return Bunch(par)
 
