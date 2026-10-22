@@ -713,7 +713,7 @@ def projection(rho,rbin,rvir,thickness,param, output='mass', star=False):
 
     tck_rho = splrep(rbin, rho, s=0, k=3)
     rho_3d = splev(r_3d.ravel(), tck_rho, ext=3).reshape(r_3d.shape)
-    projected_rho = 2 * np.trapz(rho_3d, x=r_int, axis=1)
+    projected_rho = 2 * np.trapezoid(rho_3d, x=r_int, axis=1)
     if output == 'density':
         return projected_rho
         
@@ -1040,8 +1040,8 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                 # Apply corrections
                 rhoCDM = dens['CDM']
                 rhoBAR = frac['HGA']*dens['HGA'] + frac['IGA']*dens['IGA'] + frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
-                corrFDM = np.trapz(rbin**2 * V_overlap_ov_tot * rhoCDM, rbin)/np.trapz(rbin**2 * rhoCDM, rbin)
-                corrBAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoBAR, rbin)/np.trapz(rbin**2 * rhoBAR, rbin)
+                corrFDM = np.trapezoid(rbin**2 * V_overlap_ov_tot * rhoCDM, rbin)/np.trapezoid(rbin**2 * rhoCDM, rbin)
+                corrBAR = np.trapezoid(rbin**2 * V_overlap_ov_tot * rhoBAR, rbin)/np.trapezoid(rbin**2 * rhoBAR, rbin)
 
                 if do_diag:
                     LOGGER.debug(
@@ -1221,7 +1221,7 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
                     
                     V_overlap_ov_tot   = impact_factor(rbin, h_cov, shell_cov, thickness)
                     rhoSTAR = frac['CGA']*dens['CGA'] + frac['SGA']*dens['SGA']
-                    corrSTAR = np.trapz(rbin**2 * V_overlap_ov_tot * rhoSTAR, rbin)/np.trapz(rbin**2 * rhoSTAR, rbin)
+                    corrSTAR = np.trapezoid(rbin**2 * V_overlap_ov_tot * rhoSTAR, rbin)/np.trapezoid(rbin**2 * rhoSTAR, rbin)
 
                     rho2D_star = corrSTAR*(rho2D_CGA + rho2D_SGA)
                     rho2D_bar  = corrSTAR*(rho2D_HGA + rho2D_IGA + rho2D_CGA + rho2D_SGA)
@@ -1344,7 +1344,7 @@ def loop_halo_chunks_worker(i_cpu, idx_local, task, args_for_loop_halo_chunks, o
 
             #correction = [int dr r^2 V_rel(r) rho(r)]/[int dr r^2 rho(r)]
             rhoDMB = dens['DMB']
-            corrDMB = np.trapz(rbin**2 * V_overlap_ov_tot * rhoDMB, rbin)/np.trapz(rbin**2 * rhoDMB, rbin)
+            corrDMB = np.trapezoid(rbin**2 * V_overlap_ov_tot * rhoDMB, rbin)/np.trapezoid(rbin**2 * rhoDMB, rbin)
             DDMB *= corrDMB
 
             smallestD = param.code.disp_trunc #Mpc/h

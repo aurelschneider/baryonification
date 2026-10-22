@@ -434,6 +434,9 @@ class IO_shell:
             return shell_id_full[min_shell:max_shell]
         elif shell_file_format in ('box_replication', 'euclid_fs2'):
             return range(min_shell, max_shell)
+        elif shell_file_format == 'FLAMINGO' and halo_lc_file_format == 'FLAMINGO':
+            # FLAMINGO HEALPix shells are numbered 0, 1, 2, ... (lightcone0_shells/shell_<id>)
+            return range(min_shell, max_shell)
         else:
             LOGGER.critical(f"Other shell file formats not supported. Requested format not recognized: {shell_file_format}")
             exit()
@@ -475,6 +478,24 @@ class IO_shell:
             LOGGER.debug(f"Reading shell file: {fname}")
             with fits.open(fname) as hdul:
                 pixels = np.array(hdul[1].data, dtype=float)
+        elif shell_file_format == 'FLAMINGO':
+            # One HDF5 file per shell, e.g. .../lightcone0_shells/shell_{shell_id}/lightcone0.shell_{shell_id}.0.hdf5;
+            # shellfile_in is that path with "{shell_id}" as placeholder. Pixel values are masses
+            # (FLAMINGO units of 1e10 Msun), RING ordering.
+            fname = shell_file_in.format(shell_id=shell_id_i)
+            LOGGER.debug(f"Reading shell file: {fname}")
+            with h5py.File(fname, 'r') as f:
+                dset = f[self.param.files.flamingo_map_field]
+                ordering = dset.attrs.get('pixel_ordering_scheme', b'ring')
+                pixels = np.array(dset[:], dtype=float)
+            if (ordering.decode() if isinstance(ordering, bytes) else str(ordering)).lower() != 'ring':
+                LOGGER.critical(f"FLAMINGO map {fname} is not in RING ordering")
+                exit()
+            # degrade to the requested resolution, keeping the total mass (sum over child pixels)
+            nside_file = hp.npix2nside(len(pixels))
+            if nside_file != self.param.shell.nside:
+                LOGGER.info(f"Degrading FLAMINGO shell {shell_id_i} from nside {nside_file} to {self.param.shell.nside}")
+                pixels = hp.ud_grade(pixels, nside_out=self.param.shell.nside, power=-2)
         else:
             LOGGER.critical(f"Other shell file formats not supported. Requested format not recognized: {shell_file_format}")
             exit()
@@ -672,6 +693,44 @@ class IO_shell:
                 halo_shell[i] = h
             lchalo_file.close()
             del h#, halos_cosmogrid_old
+        elif (halo_lc_file_format == 'FLAMINGO'):
+            # One HDF5 file per shell from prep_halocone(_v2) on FLAMINGO SOAP-HBT catalogues, with
+            # datasets 'shells' (shell_id, lower_z, upper_z, lower_com, upper_com, shell_com in Mpc/h) and
+            # 'halos' (positions relative to the observer and rvir in comoving kpc/h, Mvir = M200c in Msun/h,
+            # cvir = c200c). halolc_in is the file path with "{shell_id}" as placeholder.
+            h_dt = np.dtype([('ID', '<i8'), ('IDhost', '<i8'), ('cov', '<f8'), ('x', '<f8'), ('y', '<f8'),('z', '<f8'),('Mvir', '<f8'), ('rvir', '<f8'), ('cvir', '<f8')])
+            shell_id = list(range(min_shell, max_shell))
+            halo_shell, shell_comoving_dis, thickness, redshift, shell_info = {}, {}, {}, {}, []
+
+            for i in shell_id:
+                fname = halo_lc_file.format(shell_id=i)
+                LOGGER.debug(f"Opening halo lightcone file: {fname}")
+                with h5py.File(fname, 'r') as lchalo_file:
+                    info = lchalo_file['shells'][0]
+                    lchalo = lchalo_file['halos'][:]
+                shell_info.append(info)
+                shell_comoving_dis[i] = info['shell_com']
+                thickness[i] = info['upper_com'] - info['lower_com']
+                redshift[i] = (info['lower_z'] + info['upper_z']) / 2
+                self.param.cosmo.z = redshift[i]
+
+                h = np.zeros(len(lchalo), dtype=h_dt)
+                h['ID'] = lchalo['ID']
+                h['IDhost'] = -1    # the halo lightcone contains central halos only -> all are hosts
+                # project the halo positions onto the shell's nominal comoving distance, as in the
+                # other formats; h['cov'] keeps the true distance [Mpc/h]
+                norm = np.sqrt(lchalo['x']**2 + lchalo['y']**2 + lchalo['z']**2)       # kpc/h
+                h['cov'] = norm / 1000
+                h['x'] = lchalo['x'] / norm * shell_comoving_dis[i]                      # Mpc/h
+                h['y'] = lchalo['y'] / norm * shell_comoving_dis[i]
+                h['z'] = lchalo['z'] / norm * shell_comoving_dis[i]
+                h['Mvir'] = lchalo['Mvir']                                               # M200c [Msun/h]
+                h['rvir'] = lchalo['rvir'] / 1000   # R200c, comoving kpc/h -> Mpc/h (SOAP radii are already comoving: no (1+z))
+                h['cvir'] = lchalo['cvir']
+                h = h[h['Mvir'] > self.param.code.Mhalo_min]
+                halo_shell[i] = h
+            shell_info = np.array(shell_info)
+            del lchalo
         else:
             LOGGER.critical(f"Other halo file formats not supported. Requested format not recognized: {halo_lc_file_format}")
             exit()
